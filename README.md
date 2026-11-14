@@ -115,6 +115,17 @@ Not shown (yet): favourites. Tracearr records plays, not favourites.
 
 ## Troubleshooting
 
+**Check one customer**, step by step: the settings, the media server users
+Paywarr noted on their subscriptions, what Tracearr and Silo know about them,
+and what the page will show. It only reads, and makes the customer's next visit
+ask afresh:
+
+```bash
+su -s /bin/bash www-data -c "php /opt/paywarr-stats/tools/stats-check.php /opt/paymenter customer@example.com"
+```
+
+Errors are in Paymenter's log:
+
 ```bash
 grep -h "Paywarr Stats" /opt/paymenter/storage/logs/laravel-$(date +%F).log | tail -5
 ```
@@ -148,6 +159,7 @@ Paymenter and Laravel in `tests/shims.php`. GitHub runs them on every push.
 | `extensions/Others/PaywarrStats/routes.php` | `/stats` and `/stats/poster/{number}` |
 | `extensions/Others/PaywarrStats/lang/da.json` | Danish |
 | `install.sh` | Copies the extension into Paymenter |
+| `tools/stats-check.php` | Checks My stats for one customer, step by step |
 | `tests/` | Tracearr and Silo stub, stand-ins and scenarios |
 | `assets/` | Banner and the picture GitHub shows when the project is shared |
 
