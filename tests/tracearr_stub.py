@@ -5,6 +5,14 @@
   "Authorization: Bearer trr_pub_..." and answer as publicV2 does.
 * GET /api/v1/images/proxy needs no authentication (routes/images.ts).
 
+And for Silo, under /silo, written from Silo's API contract (openapi.json and
+its fixtures): /api/v2/admin/users/:id/watch-summary, /api/v2/admin/playback-history
+(user_id filter, cursor pages of up to 200), /api/v2/profiles and
+/api/v2/catalog/items/:id (needs X-Profile-Id of the key owner's profile).
+"sa_full" is a full-access key; "sa_monitor" has only admin:monitor:read, so
+profiles and the catalog answer 403. Posters: a signed Silo route
+(/silo/img/...) or object storage (/s3/...).
+
 Endpoints under /_test/ are not part of Tracearr; they let the tests set the
 data and read what was asked.
 """
@@ -16,7 +24,9 @@ from urllib.parse import parse_qs, urlparse
 
 
 def fresh_state() -> dict:
-    return {"key": "trr_pub_test", "identities": [], "stats": {}, "history": {}, "watched": {}, "requests": []}
+    return {"key": "trr_pub_test", "identities": [], "stats": {}, "history": {}, "watched": {}, "requests": [],
+            "silo": {"summary": {}, "history": {}, "items": {}, "ignore_user_filter": False,
+                     "profiles": [{"id": "p-owner", "is_primary": True, "has_pin": False}, {"id": "p-kid", "is_primary": False, "has_pin": False}]}}
 
 
 STATE = fresh_state()
@@ -58,6 +68,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/_test/state":
             return self.send_json(200, STATE)
         if path == "/_test/set":
+            STATE["silo"].update(body.pop("silo", {}))
             STATE.update(body)
             return self.send_json(200, {"ok": True})
         if path == "/_test/clear-requests":
@@ -72,6 +83,16 @@ class Handler(BaseHTTPRequestHandler):
             if "svg" in image:
                 return self.send_raw(200, "image/svg+xml", b"<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>")
             return self.send_raw(200, "image/jpeg", b"\xff\xd8\xff\xe0JPEG:" + image.encode())
+
+        if path.startswith("/silo/img/") or path.startswith("/s3/"):
+            STATE["requests"].append({"method": method, "path": "image:" + path, "auth": self.headers.get("Authorization") or ""})
+            if "notimage" in path:
+                return self.send_raw(200, "text/html", b"<html>login</html>")
+            if "svg" in path:
+                return self.send_raw(200, "image/svg+xml", b"<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>")
+            return self.send_raw(200, "image/jpeg", b"\xff\xd8\xff\xe0JPEG:" + path.encode())
+        if path.startswith("/silo/"):
+            return self.silo(method, path[len("/silo"):], query)
 
         prefix = "/api/v2/public"
         if not path.startswith(prefix + "/"):
@@ -111,6 +132,46 @@ class Handler(BaseHTTPRequestHandler):
                 rows = [row for row in rows if row.get("watched_state") == "watched"]
             return self.send_json(200, {"data": rows[:page_size], "meta": {"nextCursor": None, "pageSize": page_size}})
         return self.send_json(404, {"message": "Not found"})
+
+
+    def silo(self, method: str, path: str, query: dict) -> None:
+        silo = STATE["silo"]
+        STATE["requests"].append({"method": method, "path": "silo:" + path, "query": query, "profile": self.headers.get("X-Profile-Id")})
+        auth = self.headers.get("Authorization") or ""
+        if auth not in ("Bearer sa_full", "Bearer sa_monitor"):
+            return self.send_json(401, {"title": "authentication_required", "status": 401})
+        monitor_only = auth == "Bearer sa_monitor"
+        parts = path.strip("/").split("/")
+        if method == "GET" and len(parts) == 6 and parts[2:4] == ["admin", "users"] and parts[5] == "watch-summary":
+            days = int(query.get("days", 30))
+            if not 1 <= days <= 365:
+                return self.send_json(422, {"title": "validation_failed", "status": 422})
+            numbers = silo["summary"].get(parts[4], {}).get(str(days), {"plays": 0, "watched_seconds": 0})
+            return self.send_json(200, {"days": days, "since": "2026-01-01T00:00:00.000Z", "completed_plays": 0, "last_played_at": None, **numbers})
+        if method == "GET" and path == "/api/v2/admin/playback-history":
+            limit = int(query.get("limit", 50))
+            if limit > 200:
+                return self.send_json(422, {"title": "validation_failed", "status": 422})
+            if silo["ignore_user_filter"]:
+                rows = [p for plays in silo["history"].values() for p in plays]
+            else:
+                rows = silo["history"].get(query.get("user_id", ""), []) if "user_id" in query else [p for plays in silo["history"].values() for p in plays]
+            start = int(query.get("cursor", "0") or 0)
+            chunk = rows[start:start + limit]
+            more = start + limit < len(rows)
+            return self.send_json(200, {"items": chunk, "page": {"has_more": more, **({"next_cursor": str(start + limit)} if more else {})}})
+        if monitor_only:
+            return self.send_json(403, {"title": "permission_denied", "status": 403})
+        if method == "GET" and path == "/api/v2/profiles":
+            return self.send_json(200, {"items": silo["profiles"]})
+        if method == "GET" and len(parts) == 5 and parts[2:4] == ["catalog", "items"]:
+            if self.headers.get("X-Profile-Id") != "p-owner":
+                return self.send_json(403 if self.headers.get("X-Profile-Id") else 400, {"title": "profile_required", "status": 400})
+            item = silo["items"].get(parts[4])
+            if item is None:
+                return self.send_json(404, {"title": "not_found", "status": 404})
+            return self.send_json(200, {"content_id": parts[4], "genres": [], **item})
+        return self.send_json(404, {"title": "not_found", "status": 404})
 
 
 if __name__ == "__main__":

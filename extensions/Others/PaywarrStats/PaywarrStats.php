@@ -13,15 +13,16 @@ use Illuminate\Support\HtmlString;
 use Throwable;
 
 /**
- * Each customer's own watch statistics, from Tracearr, on a "My stats" page
- * in the client area. The customer's media server users come from Paywarr
- * (the Wizarr server extension); Tracearr is only asked about those, so a
- * customer never sees anyone else's numbers.
+ * Each customer's own watch statistics on a "My stats" page in the client
+ * area: from Tracearr for Plex, Jellyfin and Emby, from Silo itself for
+ * Silo. The customer's media server users come from Paywarr (the Wizarr
+ * server extension); only those are asked about, so a customer never sees
+ * anyone else's numbers.
  */
 #[ExtensionMeta(
     name: 'Paywarr Stats',
-    description: 'Shows each customer their own watch statistics from Tracearr, on a page in the client area.',
-    version: '1.2.0',
+    description: 'Shows each customer their own watch statistics from Tracearr or Silo, on a page in the client area.',
+    version: '1.3.0',
     author: 'Paywarr',
     url: 'https://github.com/Lolles1911/Paywarr-stats',
 )]
@@ -32,6 +33,8 @@ class PaywarrStats extends Extension
 
     private ?TracearrClient $client = null;
 
+    private ?SiloClient $silo = null;
+
     public function getConfig($values = [])
     {
         return [
@@ -39,17 +42,33 @@ class PaywarrStats extends Extension
                 'name' => 'tracearr_url',
                 'label' => 'Tracearr URL (internal)',
                 'type' => 'text',
-                'required' => true,
+                'required' => false,
                 'placeholder' => 'http://192.168.1.10:3000',
-                'description' => 'How Paymenter reaches Tracearr. Never shown to customers.',
+                'description' => 'For Plex, Jellyfin and Emby. How Paymenter reaches Tracearr. Never shown to customers. Leave empty if you only use Silo.',
             ],
             [
                 'name' => 'tracearr_api_key',
                 'label' => 'Tracearr API key',
                 'type' => 'password',
-                'required' => true,
+                'required' => false,
                 'encrypted' => true,
                 'description' => 'Tracearr -> Settings -> Data & API -> API -> Generate key (starts with "trr_pub_"). Needs the Paywarr (Wizarr) server extension for the customers\' media server users.',
+            ],
+            [
+                'name' => 'silo_url',
+                'label' => 'Silo URL (internal)',
+                'type' => 'text',
+                'required' => false,
+                'placeholder' => 'http://192.168.1.10:8090',
+                'description' => 'For customers on Silo (a Silo server in Paywarr). Silo records plays itself, so no Tracearr is needed for them. Leave empty without Silo.',
+            ],
+            [
+                'name' => 'silo_api_key',
+                'label' => 'Silo API key',
+                'type' => 'password',
+                'required' => false,
+                'encrypted' => true,
+                'description' => 'Silo -> Admin -> API Keys (starts with "sa_"). Full access gives posters and genres; a key with only admin:monitor:read gives the rest. The Paywarr key can be reused.',
             ],
         ];
     }
@@ -112,15 +131,18 @@ class PaywarrStats extends Extension
     public function posterFor(array $stats, int $number): ?array
     {
         $path = $stats['posters'][$number - 1] ?? null;
+        if ($number < 1 || !is_string($path) || $path === '') {
+            return null;
+        }
 
-        return $number >= 1 && is_string($path) && $path !== '' ? $this->client()->poster($path) : null;
+        return str_starts_with($path, 'silo:') ? $this->silo()->poster(substr($path, 5)) : $this->client()->poster($path);
     }
 
     /** The customer's statistics, kept for CACHE_SECONDS. */
     private function statsForUser($user): array
     {
         // The version: entries stored by an older version have another shape.
-        return Cache::remember('paywarr-stats:v3:' . $user->id, self::CACHE_SECONDS, function () use ($user) {
+        return Cache::remember('paywarr-stats:v4:' . $user->id, self::CACHE_SECONDS, function () use ($user) {
             $services = Service::where('user_id', $user->id)
                 ->whereIn('status', ['active', 'suspended'])
                 ->with(['properties', 'product.server'])
@@ -142,7 +164,7 @@ class PaywarrStats extends Extension
      * each "id:username:type,...".
      *
      * @param  array<int, array<string, mixed>>  $propertyLists  one per subscription
-     * @return array<int, array{type: string, username: string}>
+     * @return array<int, array{type: string, username: string, id: string}>
      */
     public function mediaAccounts(array $propertyLists): array
     {
@@ -153,10 +175,11 @@ class PaywarrStats extends Extension
                     continue;
                 }
                 foreach (array_filter(explode(',', (string) $value)) as $entry) {
-                    [, $username, $type] = array_pad(explode(':', $entry, 3), 3, '');
+                    [$id, $username, $type] = array_pad(explode(':', $entry, 3), 3, '');
                     $username = rawurldecode($username);
                     if ($username !== '') {
-                        $accounts[strtolower(rawurldecode($type)) . '|' . strtolower($username)] = ['type' => strtolower(rawurldecode($type)), 'username' => $username];
+                        // The ID is the media server's own (Silo: the account ID); Tracearr matches by name.
+                        $accounts[strtolower(rawurldecode($type)) . '|' . strtolower($username)] = ['type' => strtolower(rawurldecode($type)), 'username' => $username, 'id' => $id];
                     }
                 }
             }
@@ -200,8 +223,23 @@ class PaywarrStats extends Extension
         if (!$accounts) {
             return ['state' => 'no_access'];
         }
-        $ids = $this->matchIdentities($accounts, $this->client()->users());
-        if (!$ids) {
+        // Silo accounts are asked of Silo itself; the rest of Tracearr.
+        $silo = array_values(array_filter($accounts, fn ($account) => $account['type'] === 'silo'));
+        $others = array_values(array_filter($accounts, fn ($account) => $account['type'] !== 'silo'));
+        $parts = [];
+        if ($others && $this->configured('tracearr')) {
+            $ids = $this->matchIdentities($others, $this->client()->users());
+            if ($ids) {
+                $parts[] = $this->tracearrPart($ids);
+            }
+        }
+        if ($silo && $this->configured('silo')) {
+            $part = $this->siloPart(array_values(array_filter(array_column($silo, 'id'), 'ctype_digit')));
+            if ($part['plays'] || $part['windows']['all_time']['plays'] > 0) {
+                $parts[] = $part;
+            }
+        }
+        if (!$parts) {
             return ['state' => 'no_data'];
         }
 
@@ -210,37 +248,26 @@ class PaywarrStats extends Extension
         $plays = [];
         $shows = [];
         $movies = 0;
-        foreach ($ids as $id) {
-            $stats = $this->client()->userStats($id);
+        foreach ($parts as $part) {
             foreach ($windows as $key => $sum) {
-                $windows[$key]['plays'] += (int) ($stats['windows'][$key]['plays'] ?? 0);
-                $windows[$key]['watch_time_ms'] += (int) ($stats['windows'][$key]['watch_time_ms'] ?? 0);
+                $windows[$key]['plays'] += $part['windows'][$key]['plays'];
+                $windows[$key]['watch_time_ms'] += $part['windows'][$key]['watch_time_ms'];
             }
-            foreach ($stats['top_genres'] ?? [] as $genre) {
-                $genres[(string) $genre['genre']] = ($genres[(string) $genre['genre']] ?? 0) + (int) $genre['plays'];
+            foreach ($part['genres'] as $genre => $count) {
+                $genres[$genre] = ($genres[$genre] ?? 0) + $count;
             }
-            foreach ($this->client()->userHistory($id) as $play) {
-                $plays[] = $this->play($play);
-            }
+            array_push($plays, ...$part['plays']);
             // The same show on two servers counts once, with the furthest progress.
-            foreach ($this->client()->watchedMedia($id, 'show') as $show) {
-                $title = (string) ($show['title'] ?? '');
-                if ($title === '') {
-                    continue;
-                }
-                $key = strtolower($title);
-                $known = $shows[$key] ?? ['title' => $title, 'plays' => 0, 'watched' => 0, 'episodes' => null, 'last' => ''];
-                $known['plays'] += (int) ($show['plays'] ?? 0);
-                $known['watched'] = max($known['watched'], (int) ($show['episodes_watched'] ?? 0));
-                $known['episodes'] = isset($show['episode_count']) ? max((int) $known['episodes'], (int) $show['episode_count']) : $known['episodes'];
-                $known['last'] = max($known['last'], (string) ($show['last_watched_day'] ?? ''));
+            foreach ($part['shows'] as $show) {
+                $key = strtolower($show['title']);
+                $known = $shows[$key] ?? ['title' => $show['title'], 'plays' => 0, 'watched' => 0, 'episodes' => null, 'last' => ''];
+                $known['plays'] += $show['plays'];
+                $known['watched'] = max($known['watched'], $show['watched']);
+                $known['episodes'] = $show['episodes'] !== null ? max((int) $known['episodes'], $show['episodes']) : $known['episodes'];
+                $known['last'] = max($known['last'], $show['last']);
                 $shows[$key] = $known;
             }
-            foreach ($this->client()->watchedMedia($id, 'movie') as $movie) {
-                if (($movie['watched_state'] ?? '') === 'watched') {
-                    $movies++;
-                }
-            }
+            $movies += $part['movies'];
         }
         usort($plays, fn ($a, $b) => strcmp($b['started_at'], $a['started_at']));
         arsort($genres);
@@ -297,6 +324,146 @@ class PaywarrStats extends Extension
             'recent' => $recent,
             'insights' => $this->insights($plays),
             'posters' => $posters,
+            // Silo keeps a year of totals: "all time" is the last 12 months when only Silo answered.
+            'all_time' => count(array_filter($parts, fn ($part) => !empty($part['year_only']))) === count($parts) ? 'year' : 'all',
+        ];
+    }
+
+    /** One customer's numbers from Tracearr, for the identities found there. */
+    private function tracearrPart(array $ids): array
+    {
+        $part = ['windows' => [], 'genres' => [], 'plays' => [], 'shows' => [], 'movies' => 0];
+        foreach (['last_7', 'last_30', 'all_time'] as $key) {
+            $part['windows'][$key] = ['plays' => 0, 'watch_time_ms' => 0];
+        }
+        foreach ($ids as $id) {
+            $stats = $this->client()->userStats($id);
+            foreach ($part['windows'] as $key => $sum) {
+                $part['windows'][$key]['plays'] += (int) ($stats['windows'][$key]['plays'] ?? 0);
+                $part['windows'][$key]['watch_time_ms'] += (int) ($stats['windows'][$key]['watch_time_ms'] ?? 0);
+            }
+            foreach ($stats['top_genres'] ?? [] as $genre) {
+                $part['genres'][(string) $genre['genre']] = ($part['genres'][(string) $genre['genre']] ?? 0) + (int) $genre['plays'];
+            }
+            foreach ($this->client()->userHistory($id) as $play) {
+                $part['plays'][] = $this->play($play);
+            }
+            foreach ($this->client()->watchedMedia($id, 'show') as $show) {
+                if ((string) ($show['title'] ?? '') !== '') {
+                    $part['shows'][] = [
+                        'title' => (string) $show['title'],
+                        'plays' => (int) ($show['plays'] ?? 0),
+                        'watched' => (int) ($show['episodes_watched'] ?? 0),
+                        'episodes' => isset($show['episode_count']) ? (int) $show['episode_count'] : null,
+                        'last' => (string) ($show['last_watched_day'] ?? ''),
+                    ];
+                }
+            }
+            foreach ($this->client()->watchedMedia($id, 'movie') as $movie) {
+                if (($movie['watched_state'] ?? '') === 'watched') {
+                    $part['movies']++;
+                }
+            }
+        }
+
+        return $part;
+    }
+
+    /**
+     * One customer's numbers from Silo, for their Silo accounts. Totals come
+     * from Silo's watch summary (at most a year back); everything else from
+     * the latest 200 plays, with titles, genres and series sizes from Silo's
+     * catalog where the key may read it.
+     */
+    private function siloPart(array $accountIds): array
+    {
+        $part = ['windows' => [], 'genres' => [], 'plays' => [], 'shows' => [], 'movies' => 0, 'year_only' => true];
+        $raw = [];
+        foreach (['last_7' => 7, 'last_30' => 30, 'all_time' => 365] as $key => $days) {
+            $part['windows'][$key] = ['plays' => 0, 'watch_time_ms' => 0];
+            foreach ($accountIds as $id) {
+                $summary = $this->silo()->watchSummary($id, $days);
+                $part['windows'][$key]['plays'] += (int) ($summary['plays'] ?? 0);
+                $part['windows'][$key]['watch_time_ms'] += (int) round(1000 * (float) ($summary['watched_seconds'] ?? 0));
+            }
+        }
+        foreach ($accountIds as $id) {
+            array_push($raw, ...$this->silo()->history($id));
+        }
+        usort($raw, fn ($a, $b) => strcmp((string) ($b['started_at'] ?? ''), (string) ($a['started_at'] ?? '')));
+
+        $movies = [];   // content ID => plays
+        $series = [];   // lower-case title => details
+        foreach ($raw as $play) {
+            $part['plays'][] = $this->siloPlay($play);
+            $item = (string) ($play['media_item_id'] ?? '');
+            $title = (string) ($play['series_title'] ?? '');
+            if (($play['media_type'] ?? '') === 'movie' && $item !== '') {
+                $movies[$item] ??= ['plays' => 0, 'completed' => false];
+                $movies[$item]['plays']++;
+                $movies[$item]['completed'] = $movies[$item]['completed'] || !empty($play['completed']);
+            } elseif ($title !== '') {
+                $key = strtolower($title);
+                $series[$key] ??= ['title' => $title, 'plays' => 0, 'episodes_seen' => [], 'last' => '', 'episode_id' => $item];
+                $series[$key]['plays']++;
+                if (!empty($play['completed'])) {
+                    $series[$key]['episodes_seen'][($play['season_number'] ?? '?') . 'x' . ($play['episode_number'] ?? '?')] = true;
+                }
+                $series[$key]['last'] = max($series[$key]['last'], substr((string) ($play['ended_at'] ?? ''), 0, 10));
+            }
+        }
+        $part['movies'] = count(array_filter($movies, fn ($movie) => $movie['completed']));
+
+        // Catalog details for what the page shows: the latest shows and movies.
+        uasort($series, fn ($a, $b) => strcmp($b['last'], $a['last']));
+        $n = 0;
+        foreach ($series as $show) {
+            $episodes = null;
+            if ($n++ < 6 && ($episode = $this->silo()->item($show['episode_id'])) && ($whole = $this->silo()->item((string) ($episode['series_id'] ?? '')))) {
+                $episodes = isset($whole['episode_count']) ? (int) $whole['episode_count'] : null;
+                foreach ($whole['genres'] ?? [] as $genre) {
+                    $part['genres'][(string) $genre] = ($part['genres'][(string) $genre] ?? 0) + $show['plays'];
+                }
+            }
+            $part['shows'][] = ['title' => $show['title'], 'plays' => $show['plays'], 'watched' => count($show['episodes_seen']), 'episodes' => $episodes, 'last' => $show['last']];
+        }
+        foreach (array_slice($movies, 0, 15, true) as $id => $movie) {
+            foreach ($this->silo()->item((string) $id)['genres'] ?? [] as $genre) {
+                $part['genres'][(string) $genre] = ($part['genres'][(string) $genre] ?? 0) + $movie['plays'];
+            }
+        }
+
+        return $part;
+    }
+
+    /** One play from Silo's playback history, as the page needs it. */
+    private function siloPlay(array $play): array
+    {
+        $started = strtotime((string) ($play['started_at'] ?? '')) ?: 0;
+        $ended = strtotime((string) ($play['ended_at'] ?? '')) ?: $started;
+        $duration = (float) ($play['duration_seconds'] ?? 0);
+        // played_seconds is real watching time, where Silo measured it; else the session's length.
+        $seconds = !empty($play['measured']) && isset($play['played_seconds']) ? (float) $play['played_seconds'] : max(0, $ended - $started);
+        if ($duration > 0) {
+            $seconds = min($seconds, $duration);
+        }
+        $item = (string) ($play['media_item_id'] ?? '');
+
+        return [
+            'title' => (string) ($play['media_title'] ?? ''),
+            'show' => (string) ($play['series_title'] ?? ''),
+            'season' => $play['season_number'] ?? null,
+            'episode' => $play['episode_number'] ?? null,
+            'year' => null,
+            'type' => (string) ($play['media_type'] ?? ''),
+            'server' => 'Silo',
+            'started_at' => (string) ($play['started_at'] ?? ''),
+            'percent' => !empty($play['completed']) ? 100 : ($duration > 0 ? (int) round(100 * min(1, (float) ($play['watched_seconds'] ?? 0) / $duration)) : null),
+            'watched_ms' => (int) round(1000 * $seconds),
+            'device' => trim((string) ($play['client_name'] ?? '')) ?: trim((string) ($play['device_platform'] ?? '')),
+            'transcode' => isset($play['video_decision']) ? $play['video_decision'] === 'transcode' : null,
+            // Served to the customer by number; "silo:" tells posterFor() where it lives.
+            'poster_path' => $item !== '' ? 'silo:' . $item : '',
         ];
     }
 
@@ -421,7 +588,7 @@ class PaywarrStats extends Extension
         if ($insights['longest_streak'] > 1) {
             $chips[] = self::t('Longest streak: :count days', ['count' => $insights['longest_streak']]);
         }
-        $html .= '<section class="ps-hero"><div class="ps-label">' . $e(self::t('All time')) . '</div>'
+        $html .= '<section class="ps-hero"><div class="ps-label">' . $e(($stats['all_time'] ?? 'all') === 'year' ? self::t('Last 12 months') : self::t('All time')) . '</div>'
             . '<div class="ps-big">' . $e($this->duration($all['watch_time_ms'])) . '</div>'
             . ($all['watch_time_ms'] >= 86400000 ? '<div class="ps-muted">' . $e(self::t('That is :count days of watching', ['count' => number_format($all['watch_time_ms'] / 86400000, 1, self::t('.'), '')])) . '</div>' : '')
             . '<div class="ps-chips">' . implode('', array_map(fn ($c) => '<span class="ps-chip">' . $e($c) . '</span>', $chips)) . '</div></section>';
@@ -588,6 +755,17 @@ class PaywarrStats extends Extension
     private function client(): TracearrClient
     {
         return $this->client ??= new TracearrClient((string) $this->config('tracearr_url'), (string) $this->config('tracearr_api_key'));
+    }
+
+    private function silo(): SiloClient
+    {
+        return $this->silo ??= new SiloClient((string) $this->config('silo_url'), (string) $this->config('silo_api_key'));
+    }
+
+    /** Whether the address and key of 'tracearr' or 'silo' are filled in. */
+    private function configured(string $source): bool
+    {
+        return trim((string) $this->config($source . '_url')) !== '' && trim((string) $this->config($source . '_api_key')) !== '';
     }
 
     /* ------------------------------------------------------------------

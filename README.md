@@ -10,8 +10,9 @@
 
 A [Paymenter](https://paymenter.org) extension that adds **My stats** to the
 client area. [Tracearr](https://github.com/connorgallopo/tracearr) collects
-what is watched on your Plex, Jellyfin and Emby servers; Paywarr Stats shows
-each customer their own part of it:
+what is watched on your Plex, Jellyfin and Emby servers, and
+[Silo](https://github.com/Silo-Server/silo-server) records it itself; Paywarr
+Stats shows each customer their own part of it:
 
 - Watch time and plays for the last 7 days, the last 30 days and all time,
   plus movies and episodes watched and their current and longest streak
@@ -23,15 +24,19 @@ each customer their own part of it:
   episode, date and how much of it
 
 Customers log in to Paymenter as usual, Discord included through
-[Paywarr](https://github.com/Lolles1911/Paywarr), and need no Tracearr account.
+[Paywarr](https://github.com/Lolles1911/Paywarr), and need no Tracearr or Silo
+admin account.
 
 ## What it needs
 
 | | |
 |---|---|
 | **Paymenter** | v1.5.9 or newer |
-| **[Paywarr](https://github.com/Lolles1911/Paywarr)** | Knows which Plex, Jellyfin and Emby users belong to which customer. Paywarr Stats reads that, so it only works next to Paywarr |
-| **[Tracearr](https://github.com/connorgallopo/tracearr)** | Running and connected to your media servers, reachable from Paymenter (it can stay on your own network) |
+| **[Paywarr](https://github.com/Lolles1911/Paywarr)** | Knows which Plex, Jellyfin, Emby and Silo users belong to which customer. Paywarr Stats reads that, so it only works next to Paywarr |
+| **[Tracearr](https://github.com/connorgallopo/tracearr)** | For Plex, Jellyfin and Emby: running and connected to your media servers, reachable from Paymenter (it can stay on your own network) |
+| **[Silo](https://github.com/Silo-Server/silo-server)** | For Silo: nothing extra, Silo records plays itself. Paymenter needs to reach Silo and an API key |
+
+You need Tracearr, Silo or both, depending on what your customers use.
 
 ## Installation
 
@@ -43,13 +48,19 @@ Customers log in to Paymenter as usual, Discord included through
    bash /opt/paywarr-stats/install.sh /opt/paymenter
    ```
 
-2. **Make a key in Tracearr:** Settings → Data & API → API → **Generate key**.
-   It starts with `trr_pub_` and can only read.
+2. **Make the keys:**
+   - Tracearr: Settings → Data & API → API → **Generate key**. It starts with
+     `trr_pub_` and can only read.
+   - Silo: Admin → API Keys → **Create API Key** on your admin account. **Full
+     access** gives everything; a key with only `admin:monitor:read` gives the
+     numbers and history but no posters or genres. The key Paywarr uses for
+     Silo works too.
 3. **Install it in Paymenter:** Admin → Extensions → **Available Extensions** →
    Paywarr Stats → **Install**.
 4. **Set it up:** open it, fill in **Tracearr URL (internal)** (e.g.
-   `http://192.168.1.10:3000`) and **Tracearr API key**, turn on **Enabled**,
-   and save.
+   `http://192.168.1.10:3000`) and **Tracearr API key**, and/or **Silo URL
+   (internal)** (Silo's own port, e.g. `http://192.168.1.10:8090`) and **Silo
+   API key**. Turn on **Enabled** and save.
 
 **My stats** then appears in the client area menu.
 
@@ -64,6 +75,12 @@ What changed in each version is on the
 
 ## How it works
 
+- **Silo** customers' numbers come from Silo itself: totals from its watch
+  summary, everything else from their latest 200 plays, with posters, genres
+  and the size of each show from Silo's catalog. Silo keeps totals for a year
+  at most, so for a customer only on Silo the big number is **the last 12
+  months** (and says so). Silo is not at 1.0 yet and this has been tested
+  against its published API contract, not yet on a real Silo server.
 - **Plex** is supported, but less tested than Jellyfin and Emby. Customers are
   found by username, and Wizarr records a Plex user's display name, which
   usually is the same as the Plex username but can differ; such a customer
@@ -71,12 +88,14 @@ What changed in each version is on the
 - **Only the customer's own numbers.** Paywarr records each customer's media
   server users on their subscriptions. Paywarr Stats finds those users in
   Tracearr (same server type and username, accounts not removed) and asks
-  Tracearr about them only. Nobody sees anyone else's numbers, and Tracearr is
-  never even asked about another customer.
+  Tracearr about them only; on Silo it asks about the customer's own account
+  ID, and drops any play that belongs to someone else. Nobody sees anyone
+  else's numbers, and neither is asked about another customer.
 - **Fast pages.** The numbers are kept for 10 minutes per customer, so page
   views don't load Tracearr.
-- **Posters** come from Tracearr's image proxy, fetched by Paymenter and passed
-  on, so Tracearr can stay on your own network. The page only asks for poster
+- **Posters** come from Tracearr's image proxy or Silo's catalog, fetched by
+  Paymenter and passed on, so both can stay on your own network. Silo's key is
+  only sent to Silo itself, never to an object storage address. The page only asks for poster
   number 1, 2, 3 … of the customer's own list, never for an address, so it
   can't be used to fetch anything else; only real images are passed on (no
   SVG). Throttled to 120 a minute per customer.
@@ -103,6 +122,9 @@ grep -h "Paywarr Stats" /opt/paymenter/storage/logs/laravel-$(date +%F).log | ta
 |---|---|
 | `Tracearr rejected the API key` | Make a new key in Tracearr (Settings → Data & API → API) and paste it again |
 | `Could not reach Tracearr at …` | Check the internal URL: IP and port, reachable from the Paymenter machine |
+| `Silo rejected the API key` / `Could not reach Silo at …` | The same for Silo: a key from Admin → API Keys, and Silo's own port (not 8096) |
+| `Silo refused … (403)` | The key must belong to an admin account, with full access or `admin:monitor:read` |
+| No posters or genres for Silo customers | The key has only `admin:monitor:read`, or your admin account's main profile has a PIN; posters need full access and a profile without PIN |
 | "Nothing watched yet" for someone who has watched | Their username in Tracearr differs from the one Paywarr recorded, or the account is removed in Tracearr |
 
 ## Tests
@@ -112,7 +134,7 @@ tests/run.sh      # requires php 8.3+, python3, curl
 ```
 
 The scenarios run the extension against `tests/tracearr_stub.py`, written from
-Tracearr's source (public API v2 and the image proxy), with small stand-ins for
+Tracearr's source (public API v2 and the image proxy) and Silo's API contract, with small stand-ins for
 Paymenter and Laravel in `tests/shims.php`. GitHub runs them on every push.
 
 ## Files
@@ -121,10 +143,11 @@ Paymenter and Laravel in `tests/shims.php`. GitHub runs them on every push.
 |---|---|
 | `extensions/Others/PaywarrStats/PaywarrStats.php` | The extension: settings, menu item, page, posters |
 | `extensions/Others/PaywarrStats/TracearrClient.php` | The calls to Tracearr |
+| `extensions/Others/PaywarrStats/SiloClient.php` | The calls to Silo |
 | `extensions/Others/PaywarrStats/routes.php` | `/stats` and `/stats/poster/{number}` |
 | `extensions/Others/PaywarrStats/lang/da.json` | Danish |
 | `install.sh` | Copies the extension into Paymenter |
-| `tests/` | Tracearr stub, stand-ins and scenarios |
+| `tests/` | Tracearr and Silo stub, stand-ins and scenarios |
 | `assets/` | Banner and the picture GitHub shows when the project is shared |
 
 ## License

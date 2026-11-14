@@ -7,6 +7,7 @@
 require __DIR__ . '/shims.php';
 require __DIR__ . '/../extensions/Others/PaywarrStats/TracearrException.php';
 require __DIR__ . '/../extensions/Others/PaywarrStats/TracearrClient.php';
+require __DIR__ . '/../extensions/Others/PaywarrStats/SiloClient.php';
 require __DIR__ . '/../extensions/Others/PaywarrStats/PaywarrStats.php';
 
 use Paymenter\Extensions\Others\PaywarrStats\PaywarrStats;
@@ -147,9 +148,9 @@ function tracearrWithCustomers(): void
 
 test('stats: the customer\'s media users are read from Paywarr, old and new style', function () {
     same([
-        ['type' => 'jellyfin', 'username' => 'mette'],
-        ['type' => 'emby', 'username' => 'Mette'],
-        ['type' => '', 'username' => 'old'],
+        ['type' => 'jellyfin', 'username' => 'mette', 'id' => '1'],
+        ['type' => 'emby', 'username' => 'Mette', 'id' => '2'],
+        ['type' => '', 'username' => 'old', 'id' => '3'],
     ], stats()->mediaAccounts([
         ['wizarr_users:1' => '1:mette:jellyfin', 'wizarr_users:4' => '2:Mette:emby', 'seerr_user_id' => '5'],
         ['wizarr_users' => '3:old', 'wizarr_users:1' => '1:mette:jellyfin'],
@@ -300,6 +301,142 @@ test('stats: when and where the customer watches, and streaks', function () {
     same([3, 3], [$insights['current_streak'], $insights['longest_streak']], 'three days in a row up to today');
     same(0, stats()->insights([$play('2026-11-10 20:00:00', 5)], strtotime('2026-11-14 12:00:00'))['current_streak'], 'nothing since: no current streak');
     same(1, stats()->insights([$play('2026-11-13 20:00:00', 5)], strtotime('2026-11-14 12:00:00'))['current_streak'], 'yesterday still counts before today\'s first play');
+});
+
+/* ---------- Silo: numbers from Silo itself ---------- */
+
+function siloStats(array $config = []): PaywarrStats
+{
+    global $STUB;
+
+    return stats($config + ['silo_url' => $STUB . '/silo', 'silo_api_key' => 'sa_full']);
+}
+
+/** One play in Silo's playback history (AdminPlaybackHistoryEntry). */
+function siloPlay(string $user, string $item, string $title, string $endedAt, array $extra = []): array
+{
+    return $extra + [
+        'session_id' => 's-' . $item . $endedAt, 'user_id' => $user, 'username' => 'u' . $user, 'profile_id' => 'p', 'profile_name' => 'P',
+        'media_item_id' => $item, 'media_file_id' => '1', 'media_title' => $title, 'media_type' => 'movie', 'play_method' => 'direct_play',
+        'started_at' => date('Y-m-d\TH:i:s.000\Z', strtotime($endedAt) - 3600), 'ended_at' => $endedAt, 'watched_seconds' => 3000, 'duration_seconds' => 6000.0,
+        'completed' => false, 'played_seconds' => 2400.0, 'series_title' => '', 'season_number' => null, 'episode_number' => null, 'measured' => true,
+        'start_position_seconds' => 0, 'paused_seconds' => 0, 'measured_since' => null, 'measured_until' => null, 'client_ip' => null, 'device_id' => 'd',
+        'device_platform' => 'tvOS', 'client_name' => 'Silo for Apple TV', 'client_version' => '1', 'video_decision' => 'direct', 'audio_decision' => 'direct',
+        'end_reason' => 'stopped', 'lifecycle_seq' => 1,
+    ];
+}
+
+/** Account 7 is the customer on Silo; account 8 is somebody else. */
+function siloWithCustomers(): void
+{
+    $episode = fn (string $id, int $n, string $at, bool $done) => siloPlay('7', $id, "Episode $n", $at, ['media_type' => 'episode', 'series_title' => 'Glass Harbor', 'season_number' => 1, 'episode_number' => $n, 'completed' => $done]);
+    stub('/_test/set', ['silo' => [
+        'summary' => [
+            '7' => ['7' => ['plays' => 3, 'watched_seconds' => 7200], '30' => ['plays' => 9, 'watched_seconds' => 36000], '365' => ['plays' => 40, 'watched_seconds' => 360000]],
+            '8' => ['7' => ['plays' => 99, 'watched_seconds' => 999999], '30' => ['plays' => 99, 'watched_seconds' => 999999], '365' => ['plays' => 99, 'watched_seconds' => 999999]],
+        ],
+        'history' => [
+            '7' => [
+                $episode('ep-3', 3, '2026-11-13T21:00:00.000Z', false),
+                siloPlay('7', 'mov-1', 'Arrival Point', '2026-11-12T21:00:00.000Z', ['completed' => true, 'video_decision' => 'transcode', 'client_name' => null, 'device_platform' => 'Android']),
+                $episode('ep-2', 2, '2026-11-11T21:00:00.000Z', true),
+                $episode('ep-1', 1, '2026-11-10T21:00:00.000Z', true),
+                siloPlay('7', 'mov-2', 'Half Film', '2026-11-09T21:00:00.000Z'),
+            ],
+            '8' => [siloPlay('8', 'mov-9', 'Secret of 8', '2026-11-13T22:00:00.000Z', ['completed' => true])],
+        ],
+        'items' => [
+            'ep-3' => ['type' => 'episode', 'title' => 'Episode 3', 'series_id' => 'ser-1', 'series_poster_url' => '/img/glass-harbor.jpg'],
+            'ser-1' => ['type' => 'series', 'title' => 'Glass Harbor', 'episode_count' => 10, 'genres' => ['Drama', 'Mystery'], 'poster_url' => '/img/glass-harbor.jpg'],
+            'mov-1' => ['type' => 'movie', 'title' => 'Arrival Point', 'genres' => ['Sci-Fi'], 'poster_url' => 'http://127.0.0.1:' . parse_url($GLOBALS['STUB'], PHP_URL_PORT) . '/s3/arrival.jpg?sig=x'],
+            'mov-2' => ['type' => 'movie', 'title' => 'Half Film', 'genres' => ['Drama']],
+        ],
+    ]]);
+}
+
+test('silo: a Silo customer\'s numbers come from Silo, and only their own', function () {
+    siloWithCustomers();
+    $stats = siloStats()->statsFor([['type' => 'silo', 'username' => 'mette', 'id' => '7']]);
+    same('ok', $stats['state'], 'found');
+    same([['plays' => 3, 'watch_time_ms' => 7200000], ['plays' => 40, 'watch_time_ms' => 360000000]], [$stats['windows']['last_7'], $stats['windows']['all_time']], 'Silo\'s watch summary');
+    same('year', $stats['all_time'], 'Silo keeps a year, and the page says so');
+    same(['Glass Harbor', 'Arrival Point', 'Half Film'], array_map(fn ($p) => $p['show'] ?: $p['title'], $stats['recent']), 'each show or movie once, newest first');
+    same([1, 2], [$stats['movies_watched'], $stats['episodes_watched']], 'only finished movies and episodes count');
+    same([['Glass Harbor', 3, 2, 10]], array_map(fn ($s) => [$s['title'], $s['plays'], $s['watched'], $s['episodes']], $stats['shows']), 'the show, with its size from Silo\'s catalog');
+    same(['Drama' => 4, 'Mystery' => 3, 'Sci-Fi' => 1], $stats['genres'], 'genres from the catalog, weighted by plays');
+    same(['Silo for Apple TV' => 4, 'Android' => 1], $stats['insights']['devices'], 'the app, or else the platform');
+    same(80, $stats['insights']['direct_share'], 'direct play from video_decision');
+
+    $asked = array_filter(state()['requests'], fn ($r) => str_starts_with($r['path'], 'silo:/api/v2/admin'));
+    ok(!array_filter($asked, fn ($r) => str_contains($r['path'], '/users/8/') || ($r['query']['user_id'] ?? '7') !== '7'), 'Silo is never asked about another account: ' . json_encode(array_column($asked, 'path')));
+    ok(!array_filter(state()['requests'], fn ($r) => str_starts_with($r['path'], '/users')), 'Tracearr is not asked about a Silo customer');
+});
+
+test('silo: plays of other accounts are dropped even if Silo ignored the filter', function () {
+    siloWithCustomers();
+    stub('/_test/set', ['silo' => ['ignore_user_filter' => true]]);
+    $stats = siloStats()->statsFor([['type' => 'silo', 'username' => 'mette', 'id' => '7']]);
+    ok(!in_array('Secret of 8', array_column($stats['recent'], 'title'), true), 'account 8\'s play is not shown');
+});
+
+test('silo: posters come through Paymenter, from Silo\'s signed route or object storage', function () {
+    siloWithCustomers();
+    $stats = siloStats()->statsFor([['type' => 'silo', 'username' => 'mette', 'id' => '7']]);
+    same(['silo:ep-3', 'silo:mov-1', 'silo:mov-2'], $stats['posters'], 'by content ID, never by address');
+    $series = siloStats()->posterFor($stats, 1);
+    same('image/jpeg', $series['type'] ?? null, 'the series poster for an episode');
+    ok(str_contains($series['body'], '/silo/img/glass-harbor.jpg'), 'from Silo\'s own route');
+    ok(str_contains(siloStats()->posterFor($stats, 2)['body'] ?? '', '/s3/arrival.jpg'), 'from object storage');
+    same(null, siloStats()->posterFor($stats, 3), 'no poster in the catalog: none');
+    $images = array_values(array_filter(state()['requests'], fn ($r) => str_starts_with($r['path'], 'image:')));
+    same(['Bearer sa_full', ''], array_column($images, 'auth'), 'the key goes to Silo only, never to object storage');
+    $html = siloStats()->pageHtml($stats);
+    ok(!str_contains($html, 's3') && !str_contains($html, 'silo:') && !str_contains($html, '/img/'), 'no Silo or storage address in the page');
+    foreach (['/img/x.svg' => 'SVG, which can carry scripts', '/img/notimage' => 'not an image (a login page)', 'file:///etc/passwd' => 'not a web address'] as $url => $what) {
+        stub('/_test/set', ['silo' => ['items' => ['mov-2' => ['type' => 'movie', 'title' => 'Half Film', 'poster_url' => $url]]]]);
+        same(null, siloStats()->posterFor($stats, 3), $what);
+    }
+});
+
+test('silo: a key with only admin:monitor:read still gives the numbers, without posters and genres', function () {
+    siloWithCustomers();
+    $stats = siloStats(['silo_api_key' => 'sa_monitor'])->statsFor([['type' => 'silo', 'username' => 'mette', 'id' => '7']]);
+    same(['ok', 40, [], null], [$stats['state'], $stats['windows']['all_time']['plays'], $stats['genres'], $stats['shows'][0]['episodes']], 'numbers, no catalog');
+    same(null, siloStats(['silo_api_key' => 'sa_monitor'])->posterFor($stats, 1), 'no poster, no error');
+});
+
+test('silo: a customer on Silo and Jellyfin gets both added up', function () {
+    tracearrWithCustomers();
+    siloWithCustomers();
+    $stats = siloStats()->statsFor([['type' => 'jellyfin', 'username' => 'mette', 'id' => '1'], ['type' => 'silo', 'username' => 'mette', 'id' => '7']]);
+    same(['plays' => 5, 'watch_time_ms' => 3 * 3600000 + 7200000], $stats['windows']['last_7'], 'Tracearr + Silo');
+    same('all', $stats['all_time'], 'Tracearr has all time');
+    ok(in_array('Pilot', array_column($stats['recent'], 'title'), true) && in_array('Arrival Point', array_column($stats['recent'], 'title'), true), 'plays from both');
+});
+
+test('silo: without Silo set up, a Silo customer sees "nothing yet", not an error', function () {
+    siloWithCustomers();
+    same(['state' => 'no_data'], stats()->statsFor([['type' => 'silo', 'username' => 'mette', 'id' => '7']]), 'no Silo address');
+    same(['state' => 'no_data'], siloStats()->statsFor([['type' => 'silo', 'username' => 'new', 'id' => '55']]), 'nothing watched yet');
+});
+
+test('silo: Silo down or a wrong key is reported plainly', function () {
+    foreach ([['silo_url' => 'http://127.0.0.1:1'], ['silo_api_key' => 'sa_wrong']] as $i => $config) {
+        try {
+            siloStats($config)->statsFor([['type' => 'silo', 'username' => 'mette', 'id' => '7']]);
+            $message = null;
+        } catch (TracearrException $e) {
+            $message = $e->getMessage();
+        }
+        ok(str_contains((string) $message, ['Could not reach Silo', 'Silo rejected the API key'][$i]), 'message: ' . $message);
+    }
+});
+
+test('silo: the page says "last 12 months" for Silo, in Danish too', function () {
+    siloWithCustomers();
+    $stats = siloStats()->statsFor([['type' => 'silo', 'username' => 'mette', 'id' => '7']]);
+    ok(str_contains(siloStats()->pageHtml($stats), 'Last 12 months') && !str_contains(siloStats()->pageHtml($stats), 'All time'), 'English');
+    ok(str_contains(inLocale('da', fn () => siloStats()->pageHtml($stats)), 'Seneste 12 måneder'), 'Danish');
 });
 
 test('stats: boot adds "My stats" to the client area menu', function () {
