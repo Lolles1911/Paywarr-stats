@@ -460,6 +460,18 @@ test('stats: genres without plays are left out', function () {
     same(['Horror' => 1], stats()->statsFor([['type' => 'jellyfin', 'username' => 'mette', 'id' => '1']])['genres'], 'only genres watched');
 });
 
+test('stats: a first, short play reads well: "under 1 min", no "0 min a day", the last thing watched up top', function () {
+    $play = ['title' => 'Ember Road', 'show' => '', 'season' => null, 'episode' => null, 'year' => 2025, 'type' => 'movie', 'server' => 'Silo', 'started_at' => '2026-11-14T15:00:00Z', 'percent' => 2, 'watched_ms' => 40000, 'device' => 'Silo Web', 'transcode' => false, 'poster' => 1];
+    $short = ['plays' => 1, 'watch_time_ms' => 40000];
+    $html = stats()->pageHtml(['state' => 'ok', 'all_time' => 'year', 'windows' => ['last_7' => $short, 'last_30' => $short, 'all_time' => $short], 'genres' => [], 'movies_watched' => 0, 'episodes_watched' => 0,
+        'shows' => [], 'recent' => [$play], 'insights' => stats()->insights([$play]), 'posters' => ['x']], '/stats/poster/');
+    ok(str_contains($html, '>Under 1 min<') && !str_contains($html, '>0 min<'), 'under 1 min');
+    ok(!str_contains($html, 'a day'), 'no daily average of nothing');
+    ok(str_contains($html, 'Last watched') && str_contains($html, 'class="ps-hero-bg"'), 'the last thing watched, poster behind');
+    ok(str_contains($html, 'When you watch'), 'a short play still counts in the patterns');
+    ok(str_contains($html, 'based on your latest play.'), 'one play, not "1 plays"');
+});
+
 test('stats: boot adds "My stats" to the client area menu', function () {
     \Illuminate\Support\Facades\Route::$routes = [];
     \Illuminate\Support\Facades\Event::$listeners = [];

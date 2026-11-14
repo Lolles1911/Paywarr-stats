@@ -22,7 +22,7 @@ use Throwable;
 #[ExtensionMeta(
     name: 'Paywarr Stats',
     description: 'Shows each customer their own watch statistics from Tracearr or Silo, on a page in the client area.',
-    version: '1.3.1',
+    version: '1.4.0',
     author: 'Paywarr',
     url: 'https://github.com/Lolles1911/Paywarr-stats',
 )]
@@ -519,7 +519,8 @@ class PaywarrStats extends Extension
             if ($ts === false) {
                 continue;
             }
-            $minutes = intdiv(max(0, $play['watched_ms']), 60000);
+            // Every play counts in the patterns, a short one as a minute.
+            $minutes = max(1, intdiv(max(0, $play['watched_ms']), 60000));
             $weekdays[(int) date('N', $ts)] += $minutes;
             $hour = (int) date('G', $ts);
             $dayparts[$hour < 6 ? 'night' : ($hour < 12 ? 'morning' : ($hour < 18 ? 'afternoon' : 'evening'))] += $minutes;
@@ -602,10 +603,25 @@ class PaywarrStats extends Extension
         if ($insights['longest_streak'] > 1) {
             $chips[] = self::t('Longest streak: :count days', ['count' => $insights['longest_streak']]);
         }
-        $html .= '<section class="ps-hero"><div class="ps-label">' . $e(($stats['all_time'] ?? 'all') === 'year' ? self::t('Last 12 months') : self::t('All time')) . '</div>'
+        $last = $stats['recent'][0] ?? null;
+        $html .= '<section class="ps-hero">'
+            . ($last && $last['poster'] > 0 ? '<img class="ps-hero-bg" alt="" src="' . $e($posterBase . $last['poster']) . '" onerror="this.remove()">' : '')
+            . '<div class="ps-hero-main"><div class="ps-label">' . $e(($stats['all_time'] ?? 'all') === 'year' ? self::t('Last 12 months') : self::t('All time')) . '</div>'
             . '<div class="ps-big">' . $e($this->duration($all['watch_time_ms'])) . '</div>'
             . ($all['watch_time_ms'] >= 86400000 ? '<div class="ps-muted">' . $e(self::t('That is :count days of watching', ['count' => number_format($all['watch_time_ms'] / 86400000, 1, self::t('.'), '')])) . '</div>' : '')
-            . '<div class="ps-chips">' . implode('', array_map(fn ($c) => '<span class="ps-chip">' . $e($c) . '</span>', $chips)) . '</div></section>';
+            . '<div class="ps-chips">' . implode('', array_map(fn ($c) => '<span class="ps-chip">' . $e($c) . '</span>', $chips)) . '</div></div>';
+        if ($last) {
+            $lastTitle = $last['show'] !== '' ? $last['show'] : $last['title'] . ($last['year'] ? ' (' . $last['year'] . ')' : '');
+            $lastSub = $last['show'] !== '' ? ($last['season'] !== null && $last['episode'] !== null ? sprintf('S%02dE%02d', $last['season'], $last['episode']) . ' · ' : '') . $last['title'] : '';
+            $when = ($ts = strtotime($last['started_at'])) ? date(self::t('M j, Y'), $ts) : '';
+            $html .= '<div class="ps-spot">' . $poster($last['poster'], $lastTitle, 'ps-spot-cover')
+                . '<div class="ps-grow"><div class="ps-label">' . $e(self::t('Last watched')) . '</div>'
+                . '<div class="ps-title ps-clamp">' . $e($lastTitle) . '</div>'
+                . ($lastSub !== '' ? '<div class="ps-muted ps-small ps-clip">' . $e($lastSub) . '</div>' : '')
+                . '<div class="ps-muted ps-tiny">' . $e(implode(' · ', array_filter([$last['server'], $when]))) . '</div>'
+                . ($last['percent'] !== null && $last['percent'] < 95 ? $bar($last['percent'] / 100) : '') . '</div></div>';
+        }
+        $html .= '</section>';
 
         // Periods
         $html .= '<div class="ps-periods">';
@@ -614,7 +630,7 @@ class PaywarrStats extends Extension
             $html .= '<div class="ps-card"><div class="ps-label">' . $e($label) . '</div>'
                 . '<div class="ps-value">' . $e($this->duration($window['watch_time_ms'])) . '</div>'
                 . '<div class="ps-muted">' . $e($window['plays'] === 1 ? self::t('1 play') : self::t(':count plays', ['count' => $window['plays']]))
-                . ' · ' . $e(self::t(':time a day', ['time' => $this->duration(intdiv($window['watch_time_ms'], $daysInPeriod))])) . '</div></div>';
+                . ($window['watch_time_ms'] >= $daysInPeriod * 60000 ? ' · ' . $e(self::t(':time a day', ['time' => $this->duration(intdiv($window['watch_time_ms'], $daysInPeriod))])) : '') . '</div></div>';
         }
         if ($insights['current_streak'] > 0) {
             $html .= '<div class="ps-card"><div class="ps-label">' . $e(self::t('Streak')) . '</div>'
@@ -628,7 +644,7 @@ class PaywarrStats extends Extension
         if (array_sum($insights['weekdays']) > 0) {
             $max = max($insights['weekdays']);
             $names = [1 => self::t('Monday'), 2 => self::t('Tuesday'), 3 => self::t('Wednesday'), 4 => self::t('Thursday'), 5 => self::t('Friday'), 6 => self::t('Saturday'), 7 => self::t('Sunday')];
-            $html .= '<section class="ps-card"><h2>' . $e(self::t('When you watch')) . '</h2><div class="ps-week">';
+            $html .= '<section class="ps-card"><h2>' . $this->icon('when-you-watch') . $e(self::t('When you watch')) . '</h2><div class="ps-week">';
             foreach ($insights['weekdays'] as $day => $minutes) {
                 $html .= '<div class="ps-col" title="' . $e($this->duration($minutes * 60000)) . '"><span class="ps-colbar"><span style="height:' . max(3, (int) round(100 * $minutes / $max)) . '%"></span></span><span class="ps-tiny">' . $e(mb_substr($names[$day], 0, 3)) . '</span></div>';
             }
@@ -646,13 +662,13 @@ class PaywarrStats extends Extension
             $html .= '<section class="ps-card">';
             if ($stats['genres']) {
                 $top = max($stats['genres']);
-                $html .= '<h2>' . $e(self::t('Favourite genres')) . '</h2>';
+                $html .= '<h2>' . $this->icon('favourite-genres') . $e(self::t('Favourite genres')) . '</h2>';
                 foreach ($stats['genres'] as $genre => $count) {
                     $html .= '<div class="ps-line"><span>' . $e($genre) . '</span>' . $bar($count / max(1, $top)) . '<span class="ps-tiny">' . $e($count) . '</span></div>';
                 }
             }
             if ($insights['devices']) {
-                $html .= '<h2>' . $e(self::t('Where you watch')) . '</h2>';
+                $html .= '<h2>' . $this->icon('where-you-watch') . $e(self::t('Where you watch')) . '</h2>';
                 $sum = array_sum($insights['devices']);
                 foreach ($insights['devices'] as $device => $count) {
                     $html .= '<div class="ps-line"><span>' . $e($device) . '</span>' . $bar($count / max(1, $sum)) . '<span class="ps-tiny">' . round(100 * $count / max(1, $sum)) . '%</span></div>';
@@ -667,7 +683,7 @@ class PaywarrStats extends Extension
 
         // Shows
         if ($stats['shows']) {
-            $html .= '<h2 class="ps-h">' . $e(self::t('Your shows')) . '</h2><div class="ps-shows">';
+            $html .= '<h2 class="ps-h">' . $this->icon('your-shows') . $e(self::t('Your shows')) . '</h2><div class="ps-shows">';
             foreach ($stats['shows'] as $show) {
                 $progress = $show['episodes'] ? min(1, $show['watched'] / $show['episodes']) : null;
                 $html .= '<div class="ps-card ps-show">' . $poster($show['poster'], $show['title'], 'ps-thumb')
@@ -682,7 +698,7 @@ class PaywarrStats extends Extension
 
         // Recently watched
         if ($stats['recent']) {
-            $html .= '<h2 class="ps-h">' . $e(self::t('Recently watched')) . '</h2><div class="ps-posters">';
+            $html .= '<h2 class="ps-h">' . $this->icon('recently-watched') . $e(self::t('Recently watched')) . '</h2><div class="ps-posters">';
             foreach ($stats['recent'] as $play) {
                 $title = $play['show'] !== '' ? $play['show'] : $play['title'] . ($play['year'] ? ' (' . $play['year'] . ')' : '');
                 $sub = $play['show'] !== ''
@@ -699,10 +715,24 @@ class PaywarrStats extends Extension
         }
 
         if ($insights['sample'] > 0) {
-            $html .= '<p class="ps-muted ps-tiny ps-foot">' . $e(self::t('Patterns are based on your latest :count plays.', ['count' => $insights['sample']])) . '</p>';
+            $html .= '<p class="ps-muted ps-tiny ps-foot">' . $e($insights['sample'] === 1 ? self::t('Patterns are based on your latest play.') : self::t('Patterns are based on your latest :count plays.', ['count' => $insights['sample']])) . '</p>';
         }
 
         return $html . '</div>';
+    }
+
+    /** A small line icon for a section heading, in the theme's text colour. */
+    private function icon(string $name): string
+    {
+        $paths = [
+            'when-you-watch' => '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+            'favourite-genres' => '<path d="M3 12V4h8l10 10-8 8L3 12z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
+            'where-you-watch' => '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+            'your-shows' => '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M8 2l4 4 4-4"/>',
+            'recently-watched' => '<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 8v4l3 2"/>',
+        ];
+
+        return '<svg class="ps-ico" viewBox="0 0 24 24" aria-hidden="true">' . ($paths[$name] ?? '') . '</svg>';
     }
 
     private function css(): string
@@ -717,8 +747,17 @@ class PaywarrStats extends Extension
             . '#paywarr-stats .ps-small{font-size:.85rem}#paywarr-stats .ps-tiny{font-size:.75rem;color:hsl(var(--color-muted, var(--color-base)))}'
             . '#paywarr-stats .ps-card{background:hsl(var(--color-background-secondary));border:1px solid hsl(var(--color-neutral));border-radius:1rem;padding:1.15rem 1.3rem}'
             . '#paywarr-stats .ps-note{margin:0}'
-            . '#paywarr-stats .ps-hero{border-radius:1.25rem;padding:1.6rem 1.75rem;border:1px solid hsl(var(--color-neutral));'
+            . '#paywarr-stats .ps-hero{position:relative;overflow:hidden;isolation:isolate;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,22rem);gap:1.5rem;align-items:center;'
+            . 'border-radius:1.25rem;padding:1.6rem 1.75rem;border:1px solid hsl(var(--color-neutral));'
             . 'background:linear-gradient(135deg,hsl(var(--color-primary) / .22),hsl(var(--color-background-secondary)) 65%)}'
+            . '#paywarr-stats .ps-hero-bg{position:absolute;inset:-3rem;width:calc(100% + 6rem);height:calc(100% + 6rem);object-fit:cover;filter:blur(40px) saturate(1.4);opacity:.35;z-index:-1}'
+            . '#paywarr-stats .ps-hero::after{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(90deg,hsl(var(--color-background-secondary) / .85),hsl(var(--color-background-secondary) / .35))}'
+            . '#paywarr-stats .ps-spot{display:flex;gap:1rem;align-items:center;padding:.8rem;border-radius:1rem;background:hsl(var(--color-background) / .5);border:1px solid hsl(var(--color-neutral));backdrop-filter:blur(8px)}'
+            . '#paywarr-stats .ps-spot .ps-bar{margin-top:.55rem}'
+            . '#paywarr-stats .ps-spot-cover{position:relative;flex:none;display:block;width:4.6rem;aspect-ratio:2/3;overflow:hidden;border-radius:.6rem;box-shadow:0 8px 22px rgb(0 0 0 / .35);background:linear-gradient(160deg,hsl(var(--color-primary) / .35),hsl(var(--color-neutral)))}'
+            . '#paywarr-stats .ps-spot-cover img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}'
+            . '#paywarr-stats .ps-clamp{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}'
+            . '#paywarr-stats .ps-ico{width:1.15em;height:1.15em;margin-right:.45rem;vertical-align:-.2em;fill:none;stroke:hsl(var(--color-primary));stroke-width:2;stroke-linecap:round;stroke-linejoin:round}'
             . '#paywarr-stats .ps-label{font-size:.8rem;text-transform:uppercase;letter-spacing:.06em;color:hsl(var(--color-muted, var(--color-base)))}'
             . '#paywarr-stats .ps-big{font-size:clamp(2.2rem,6vw,3.4rem);font-weight:800;line-height:1.1;margin:.3rem 0}'
             . '#paywarr-stats .ps-value{font-size:1.55rem;font-weight:700;margin:.3rem 0}'
@@ -752,6 +791,7 @@ class PaywarrStats extends Extension
             . '#paywarr-stats .ps-progress span{display:block;height:100%;background:hsl(var(--color-primary))}'
             . '#paywarr-stats .ps-clip{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}'
             . '#paywarr-stats .ps-foot{margin-top:2rem}'
+            . '@media (max-width:760px){#paywarr-stats .ps-hero{grid-template-columns:1fr}}'
             . '@media (max-width:640px){#paywarr-stats .ps-posters{grid-template-columns:repeat(auto-fill,minmax(6.25rem,1fr));gap:.75rem}#paywarr-stats .ps-hero{padding:1.3rem}}';
     }
 
@@ -760,6 +800,9 @@ class PaywarrStats extends Extension
     {
         $minutes = intdiv(max(0, $milliseconds), 60000);
         $hours = intdiv($minutes, 60);
+        if ($milliseconds > 0 && $minutes === 0) {
+            return self::t('Under 1 min');
+        }
 
         return $hours > 0
             ? self::t(':hours h :minutes min', ['hours' => $hours, 'minutes' => $minutes % 60])
