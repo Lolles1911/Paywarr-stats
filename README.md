@@ -64,6 +64,10 @@ What changed in each version is on the
 
 ## How it works
 
+- **Plex** is supported, but less tested than Jellyfin and Emby. Customers are
+  found by username, and Wizarr records a Plex user's display name, which
+  usually is the same as the Plex username but can differ; such a customer
+  sees "Nothing watched yet". Feedback is very welcome.
 - **Only the customer's own numbers.** Paywarr records each customer's media
   server users on their subscriptions. Paywarr Stats finds those users in
   Tracearr (same server type and username, accounts not removed) and asks
