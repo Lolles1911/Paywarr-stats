@@ -92,7 +92,8 @@ What changed in each version is on the
   ID, and drops any play that belongs to someone else. Nobody sees anyone
   else's numbers, and neither is asked about another customer.
 - **Fast pages.** The numbers are kept for 10 minutes per customer, so page
-  views don't load Tracearr.
+  views don't load Tracearr or Silo. "Nothing watched yet" is kept for only a
+  minute, so a new customer's first play shows up soon.
 - **Posters** come from Tracearr's image proxy or Silo's catalog, fetched by
   Paymenter and passed on, so both can stay on your own network. Silo's key is
   only sent to Silo itself, never to an object storage address. The page only asks for poster

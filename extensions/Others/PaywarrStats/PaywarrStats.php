@@ -22,7 +22,7 @@ use Throwable;
 #[ExtensionMeta(
     name: 'Paywarr Stats',
     description: 'Shows each customer their own watch statistics from Tracearr or Silo, on a page in the client area.',
-    version: '1.3.0',
+    version: '1.3.1',
     author: 'Paywarr',
     url: 'https://github.com/Lolles1911/Paywarr-stats',
 )]
@@ -30,6 +30,9 @@ class PaywarrStats extends Extension
 {
     /** Numbers are kept this long per customer, so page views do not hit Tracearr. */
     private const CACHE_SECONDS = 600;
+
+    /** "Nothing watched yet" and "no access yet" are kept this long. */
+    private const EMPTY_CACHE_SECONDS = 60;
 
     private ?TracearrClient $client = null;
 
@@ -142,7 +145,12 @@ class PaywarrStats extends Extension
     private function statsForUser($user): array
     {
         // The version: entries stored by an older version have another shape.
-        return Cache::remember('paywarr-stats:v4:' . $user->id, self::CACHE_SECONDS, function () use ($user) {
+        $key = 'paywarr-stats:v4:' . $user->id;
+        $cached = Cache::get($key);
+        if (is_array($cached)) {
+            return $cached;
+        }
+        $stats = (function () use ($user) {
             $services = Service::where('user_id', $user->id)
                 ->whereIn('status', ['active', 'suspended'])
                 ->with(['properties', 'product.server'])
@@ -155,7 +163,11 @@ class PaywarrStats extends Extension
             }
 
             return $this->statsFor($this->mediaAccounts($lists));
-        });
+        })();
+        // "Nothing yet" is asked again sooner, so a first play shows up soon.
+        Cache::put($key, $stats, ($stats['state'] ?? '') === 'ok' ? self::CACHE_SECONDS : self::EMPTY_CACHE_SECONDS);
+
+        return $stats;
     }
 
     /**
@@ -254,7 +266,9 @@ class PaywarrStats extends Extension
                 $windows[$key]['watch_time_ms'] += $part['windows'][$key]['watch_time_ms'];
             }
             foreach ($part['genres'] as $genre => $count) {
-                $genres[$genre] = ($genres[$genre] ?? 0) + $count;
+                if ($count > 0) {
+                    $genres[$genre] = ($genres[$genre] ?? 0) + $count;
+                }
             }
             array_push($plays, ...$part['plays']);
             // The same show on two servers counts once, with the furthest progress.

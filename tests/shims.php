@@ -35,7 +35,59 @@ namespace App\Classes\Extension {
 
 namespace App\Models {
     /** Only named in PaywarrStats::page(), which needs a real Paymenter. */
-    class Service {}
+    /** Service::where()->whereIn()->with()->get(): the rows set in $rows, for the user asked. */
+    class Service
+    {
+        public static array $rows = [];
+
+        public static function where($column, $value): ServiceQuery
+        {
+            return new ServiceQuery(fn ($row) => $row->user_id === $value);
+        }
+    }
+
+    class ServiceQuery
+    {
+        private array $filters = [];
+
+        public function __construct(callable $filter)
+        {
+            $this->filters[] = $filter;
+        }
+
+        public function whereIn($column, array $values): static
+        {
+            $this->filters[] = fn ($row) => in_array($row->{$column}, $values, true);
+
+            return $this;
+        }
+
+        public function with($relations): static
+        {
+            return $this;
+        }
+
+        public function get(): array
+        {
+            return array_values(array_filter(Service::$rows, fn ($row) => !array_filter($this->filters, fn ($f) => !$f($row))));
+        }
+    }
+
+    /** $service->properties->pluck('value', 'key')->all() */
+    class PropertyList
+    {
+        public function __construct(private array $values) {}
+
+        public function pluck($value, $key): static
+        {
+            return $this;
+        }
+
+        public function all(): array
+        {
+            return $this->values;
+        }
+    }
 }
 
 namespace Illuminate\Foundation {
@@ -106,9 +158,27 @@ namespace Illuminate\Support\Facades {
     {
         public static array $store = [];
 
+        /** Seconds each key was stored for. */
+        public static array $ttl = [];
+
         public static function remember($key, $ttl, \Closure $callback)
         {
+            self::$ttl[$key] ??= $ttl;
+
             return self::$store[$key] ??= $callback();
+        }
+
+        public static function get($key, $default = null)
+        {
+            return self::$store[$key] ?? $default;
+        }
+
+        public static function put($key, $value, $ttl = null): bool
+        {
+            self::$store[$key] = $value;
+            self::$ttl[$key] = $ttl;
+
+            return true;
         }
     }
 

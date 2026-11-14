@@ -76,6 +76,7 @@ function test(string $name, callable $fn): void
     global $results;
     stub('/_test/reset');
     \Illuminate\Support\Facades\Cache::$store = [];
+    \Illuminate\Support\Facades\Cache::$ttl = [];
     \Illuminate\Support\Facades\Log::$warnings = [];
     try {
         $fn();
@@ -437,6 +438,26 @@ test('silo: the page says "last 12 months" for Silo, in Danish too', function ()
     $stats = siloStats()->statsFor([['type' => 'silo', 'username' => 'mette', 'id' => '7']]);
     ok(str_contains(siloStats()->pageHtml($stats), 'Last 12 months') && !str_contains(siloStats()->pageHtml($stats), 'All time'), 'English');
     ok(str_contains(inLocale('da', fn () => siloStats()->pageHtml($stats)), 'Seneste 12 måneder'), 'Danish');
+});
+
+test('stats: real numbers are kept 10 minutes, "nothing yet" only 1, so a first play shows up soon', function () {
+    tracearrWithCustomers();
+    $subscription = fn (int $user, array $properties) => (object) ['user_id' => $user, 'status' => 'active', 'product' => (object) ['server' => (object) ['extension' => 'Wizarr']], 'properties' => new \App\Models\PropertyList($properties)];
+    \App\Models\Service::$rows = [
+        $subscription(1, ['wizarr_users:1' => '1:mette:jellyfin']),
+        $subscription(2, ['wizarr_users:1' => '5:newbie:jellyfin']),
+    ];
+    $forUser = fn (int $id) => (new ReflectionMethod(PaywarrStats::class, 'statsForUser'))->invoke(stats(), (object) ['id' => $id]);
+    same(['ok', 600], [$forUser(1)['state'], \Illuminate\Support\Facades\Cache::$ttl['paywarr-stats:v4:1']], 'numbers: 10 minutes');
+    same(['no_data', 60], [$forUser(2)['state'], \Illuminate\Support\Facades\Cache::$ttl['paywarr-stats:v4:2']], 'nothing yet: 1 minute');
+    stub('/_test/clear-requests');
+    $forUser(1);
+    same([], state()['requests'], 'a kept answer asks Tracearr nothing');
+});
+
+test('stats: genres without plays are left out', function () {
+    stub('/_test/set', ['identities' => [identity('u1', [['jellyfin', 'mette']])], 'stats' => ['u1' => ['windows' => windows(1, 1, 1, 1, 1, 1), 'top_genres' => [['genre' => 'Horror', 'plays' => 1], ['genre' => 'Action', 'plays' => 0]]]]]);
+    same(['Horror' => 1], stats()->statsFor([['type' => 'jellyfin', 'username' => 'mette', 'id' => '1']])['genres'], 'only genres watched');
 });
 
 test('stats: boot adds "My stats" to the client area menu', function () {
