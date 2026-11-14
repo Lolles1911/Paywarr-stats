@@ -43,10 +43,29 @@ class TracearrClient
         return $this->call('/users/' . rawurlencode($id) . '/stats');
     }
 
-    /** The latest plays, newest first. */
-    public function userHistory(string $id, int $pageSize = 10): array
+    /** The latest plays, newest first: up to $max, in pages of 100. */
+    public function userHistory(string $id, int $max = 200): array
     {
-        return $this->call('/users/' . rawurlencode($id) . '/history', ['pageSize' => $pageSize])['data'] ?? [];
+        $plays = [];
+        $cursor = null;
+        do {
+            $page = $this->call('/users/' . rawurlencode($id) . '/history', array_filter(['pageSize' => min(100, $max - count($plays)), 'cursor' => $cursor]));
+            foreach ($page['data'] ?? [] as $play) {
+                $plays[] = $play;
+            }
+            $cursor = $page['meta']['nextCursor'] ?? null;
+        } while ($cursor !== null && count($plays) < $max);
+
+        return $plays;
+    }
+
+    /**
+     * Every movie or show this identity has watched (fully or partly), with
+     * plays and, for shows, episodes watched out of episodes in the library.
+     */
+    public function watchedMedia(string $id, string $type): array
+    {
+        return $this->call('/watched-media', ['media_type' => $type, 'user_id' => $id, 'min_state' => 'partial', 'pageSize' => 1000])['data'] ?? [];
     }
 
     /**

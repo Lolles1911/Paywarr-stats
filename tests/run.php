@@ -125,11 +125,22 @@ function tracearrWithCustomers(): void
             'u-ole' => ['windows' => windows(99, 99, 99, 99, 99, 99), 'top_genres' => [['genre' => 'Horror', 'plays' => 99]]],
         ],
         'history' => [
-            'u-mette' => [['media_title' => 'Pilot', 'show_title' => 'The Show', 'season_number' => 1, 'episode_number' => 2, 'media_type' => 'episode', 'server_name' => 'Jellyfin', 'started_at' => '2026-11-10T20:00:00Z', 'percent_complete' => 100,
+            'u-mette' => [['media_title' => 'Pilot', 'show_title' => 'The Show', 'season_number' => 1, 'episode_number' => 2, 'media_type' => 'episode', 'server_name' => 'Jellyfin', 'started_at' => '2026-11-10T20:00:00Z', 'percent_complete' => 100, 'duration_ms' => 2700000, 'device' => 'Living room TV', 'is_transcode' => false,
                 'poster_url' => '/api/v1/images/proxy?server=s1&url=%2FItems%2Fshow%2FImages%2FPrimary&width=300&height=450&fallback=poster']],
             'u-mette-emby' => [['media_title' => 'A Film', 'show_title' => null, 'year' => 2024, 'media_type' => 'movie', 'server_name' => 'Emby', 'started_at' => '2026-11-12T20:00:00Z', 'percent_complete' => 55.4,
                 'poster_url' => 'http://evil.example.com/steal']],
             'u-ole' => [['media_title' => 'Ole\'s secret', 'media_type' => 'movie', 'server_name' => 'Jellyfin', 'started_at' => '2026-11-13T20:00:00Z']],
+        ],
+        'watched' => [
+            'u-mette' => [
+                'show' => [['media_type' => 'show', 'title' => 'The Show', 'watched_state' => 'partial', 'plays' => 7, 'last_watched_day' => '2026-11-10', 'episodes_watched' => 7, 'episode_count' => 19]],
+                'movie' => [['media_type' => 'movie', 'title' => 'Old Film', 'watched_state' => 'watched', 'plays' => 1], ['media_type' => 'movie', 'title' => 'Half Film', 'watched_state' => 'partial', 'plays' => 1]],
+            ],
+            'u-mette-emby' => [
+                'show' => [['media_type' => 'show', 'title' => 'the show', 'watched_state' => 'partial', 'plays' => 2, 'last_watched_day' => '2026-11-01', 'episodes_watched' => 2, 'episode_count' => 19]],
+                'movie' => [['media_type' => 'movie', 'title' => 'A Film', 'watched_state' => 'watched', 'plays' => 1]],
+            ],
+            'u-ole' => ['show' => [['media_type' => 'show', 'title' => 'Ole\'s show', 'watched_state' => 'watched', 'plays' => 50, 'episodes_watched' => 50]], 'movie' => []],
         ],
     ]);
 }
@@ -158,9 +169,14 @@ test('stats: numbers from all the customer\'s identities, and never anyone else\
     same('ok', $stats['state'], 'found');
     same(['plays' => 3, 'watch_time_ms' => 4 * 3600000], $stats['windows']['last_7'], 'last 7 days summed');
     same(['Comedy' => 35, 'Drama' => 20], $stats['genres'], 'genres summed, most first');
-    same(['A Film', 'Pilot'], array_column($stats['history'], 'title'), 'history merged, newest first');
-    $asked = array_column(array_filter(state()['requests'], fn ($r) => str_starts_with($r['path'], '/users/')), 'path');
+    same(['A Film', 'Pilot'], array_column($stats['recent'], 'title'), 'history merged, newest first');
+    same([2, 7], [$stats['movies_watched'], $stats['episodes_watched']], 'movies fully watched; a show on two servers counts its furthest progress');
+    same([['The Show', 9, 7, 19]], array_map(fn ($s) => [$s['title'], $s['plays'], $s['watched'], $s['episodes']], $stats['shows']), 'one show across both servers, furthest progress');
+    $requests = array_filter(state()['requests'], fn ($r) => !str_starts_with($r['path'], 'image:') && $r['path'] !== '/users');
+    $asked = array_map(fn ($r) => $r['path'] . ' ' . ($r['query']['user_id'] ?? ''), $requests);
     ok(!array_filter($asked, fn ($p) => str_contains($p, 'u-ole')), 'Tracearr is never asked about another customer: ' . json_encode($asked));
+    $watched = array_filter($requests, fn ($r) => $r['path'] === '/watched-media');
+    ok(count($watched) === 4 && !array_filter($watched, fn ($r) => !in_array($r['query']['user_id'] ?? '', ['u-mette', 'u-mette-emby'], true)), 'watched media only ever for the customer\'s own identities');
 });
 
 test('stats: no media user yet, or nothing in Tracearr yet', function () {
@@ -198,28 +214,34 @@ test('stats: a wrong key or Tracearr down is reported plainly', function () {
 test('stats: the page shows the numbers, escapes what it prints, and speaks Danish', function () {
     tracearrWithCustomers();
     $html = stats()->pageHtml(stats()->statsFor([['type' => 'jellyfin', 'username' => 'mette'], ['type' => 'emby', 'username' => 'mette']]));
-    foreach (['My stats', 'Last 7 days', '4 h 0 min', '3 plays', '54 h 0 min', 'Comedy', 'The Show S01E02 – Pilot', 'A Film (2024)', 'Emby · Nov 12, 2026', '55%'] as $needle) {
+    foreach (['My stats', 'Last 7 days', '4 h 0 min', '3 plays', '54 h 0 min', 'That is 2.3 days of watching', '2 movies', '7 episodes', 'Comedy', 'The Show', 'S01E02 · Pilot', 'A Film (2024)', 'Nov 12, 2026', 'width:55%', '7 of 19 episodes', 'When you watch'] as $needle) {
         ok(str_contains($html, $needle), "shows \"$needle\"");
     }
     same('Min statistik', inLocale('da', fn () => PaywarrStats::t('My stats')), 'Danish');
     ok(str_contains(inLocale('da', fn () => stats()->pageHtml(['state' => 'no_data'])), 'Intet set endnu'), 'Danish message');
-    $evil = stats()->pageHtml(['state' => 'ok', 'windows' => windows(0, 0, 0, 0, 0, 0), 'genres' => ['<b>x</b>' => 1], 'history' => [['title' => '<script>', 'show' => '', 'season' => null, 'episode' => null, 'year' => null, 'type' => 'movie', 'server' => '', 'started_at' => '', 'percent' => null]]]);
-    ok(!str_contains($evil, '<script>') && !str_contains($evil, '<b>x</b>'), 'escaped');
+    ok(str_contains(inLocale('da', fn () => stats()->pageHtml(stats()->statsFor([['type' => 'jellyfin', 'username' => 'mette']]))), 'Det er 2,1 døgn'), 'Danish decimal comma');
+    $evil = stats()->pageHtml(['state' => 'ok', 'windows' => windows(0, 0, 0, 0, 0, 0), 'genres' => ['<b>x</b>' => 1], 'movies_watched' => 0, 'episodes_watched' => 0,
+        'shows' => [['title' => '<i>show</i>', 'plays' => 1, 'watched' => 1, 'episodes' => null, 'last' => '', 'poster' => 0]],
+        'recent' => [['title' => '<script>', 'show' => '', 'season' => null, 'episode' => null, 'year' => null, 'type' => 'movie', 'server' => '', 'started_at' => '', 'percent' => null, 'watched_ms' => 0, 'device' => '<u>tv</u>', 'transcode' => null, 'poster' => 0]],
+        'insights' => stats()->insights([['started_at' => '2026-11-10T20:00:00Z', 'watched_ms' => 60000, 'device' => '<u>tv</u>', 'transcode' => null]]), 'posters' => []], '/stats/poster/', '<em>Bo</em>');
+    ok(!array_filter(['<script>', '<b>x</b>', '<i>show', '<u>tv', '<em>Bo'], fn ($tag) => str_contains($evil, $tag)), 'escaped');
     ok(str_contains(stats()->pageHtml(null), 'be loaded right now'), 'Tracearr down: a message, not an error page');
 });
 
 test('stats: posters come through Paymenter, only from Tracearr\'s image proxy and only the customer\'s own', function () {
     tracearrWithCustomers();
     $stats = stats()->statsFor([['type' => 'jellyfin', 'username' => 'mette'], ['type' => 'emby', 'username' => 'mette']]);
-    same(['', '/api/v1/images/proxy?server=s1&url=%2FItems%2Fshow%2FImages%2FPrimary&width=300&height=450&fallback=poster'], array_column($stats['history'], 'poster'), 'only proxy paths are kept');
+    same(['/api/v1/images/proxy?server=s1&url=%2FItems%2Fshow%2FImages%2FPrimary&width=300&height=450&fallback=poster'], $stats['posters'], 'only proxy paths are kept, each once');
+    same([[0, 1], 1], [array_column($stats['recent'], 'poster'), $stats['shows'][0]['poster']], 'plays and shows point at it by number');
 
-    $image = stats()->posterFor($stats, 2);
+    $image = stats()->posterFor($stats, 1);
     same('image/jpeg', $image['type'] ?? null, 'the image, as an image');
     ok(str_contains($image['body'] ?? '', '/Items/show/Images/Primary'), 'from Tracearr\'s proxy');
-    same([null, null, null], [stats()->posterFor($stats, 1), stats()->posterFor($stats, 0), stats()->posterFor($stats, 99)], 'no poster, number 0, a number past the list');
+    same([null, null, null], [stats()->posterFor($stats, 0), stats()->posterFor($stats, -1), stats()->posterFor($stats, 99)], 'number 0, below, a number past the list');
 
     $html = stats()->pageHtml($stats, '/stats/poster/');
-    ok(str_contains($html, 'src="/stats/poster/2"') && !str_contains($html, 'src="/stats/poster/1"'), 'an <img> only where there is a poster');
+    same(2, substr_count($html, 'src="/stats/poster/1"'), 'the show and its episode share the poster');
+    same(2, substr_count($html, '<img '), 'an <img> only where there is a poster');
     ok(!str_contains($html, 'evil.example.com') && !str_contains($html, 'images/proxy'), 'no outside or Tracearr address in the page');
 });
 
@@ -233,6 +255,51 @@ test('stats: the poster fetch refuses anything but an image from the proxy', fun
     same(null, $client->poster('/api/v1/images/proxy?url=notimage'), 'not an image (e.g. a login page)');
     same(null, $client->poster('/api/v1/images/proxy?url=svg'), 'SVG, which can carry scripts');
     same('image/jpeg', $client->poster('/api/v1/images/proxy?url=ok')['type'] ?? null, 'a real image');
+});
+
+test('stats: history is read page by page, up to 200 plays per identity', function () {
+    $plays = [];
+    for ($i = 0; $i < 250; $i++) {
+        $plays[] = ['media_title' => "Film $i", 'media_type' => 'movie', 'started_at' => sprintf('2026-10-%02dT20:00:00Z', 1 + $i % 28)];
+    }
+    stub('/_test/set', ['history' => ['u1' => $plays]]);
+    $client = new TracearrClient($GLOBALS['STUB'], 'trr_pub_test');
+    same(200, count($client->userHistory('u1')), '200 of 250');
+    same(['Film 0', 'Film 199'], [$client->userHistory('u1')[0]['media_title'], $client->userHistory('u1')[199]['media_title']], 'in order, no page twice');
+    same(30, count($client->userHistory('u1', 30)), 'a smaller maximum');
+    $sizes = array_map(fn ($r) => (int) $r['query']['pageSize'], array_filter(state()['requests'], fn ($r) => $r['path'] === '/users/u1/history'));
+    ok(max($sizes) <= 100, 'never more than Tracearr allows per page');
+});
+
+test('stats: "Recently watched" shows each show or movie once, at its latest play', function () {
+    $episode = fn (string $show, int $n, string $at) => ['media_title' => "Episode $n", 'show_title' => $show, 'season_number' => 1, 'episode_number' => $n, 'media_type' => 'episode', 'started_at' => $at];
+    stub('/_test/set', ['identities' => [identity('u1', [['jellyfin', 'mette']])], 'history' => ['u1' => [
+        $episode('Show A', 3, '2026-11-13T21:00:00Z'), $episode('Show A', 2, '2026-11-13T20:00:00Z'),
+        ['media_title' => 'Film', 'year' => 2020, 'media_type' => 'movie', 'started_at' => '2026-11-12T20:00:00Z'],
+        $episode('show a', 1, '2026-11-11T20:00:00Z'),
+        ['media_title' => 'Film', 'year' => 1990, 'media_type' => 'movie', 'started_at' => '2026-11-10T20:00:00Z'],
+    ]]]);
+    $recent = stats()->statsFor([['type' => 'jellyfin', 'username' => 'mette']])['recent'];
+    same([['Episode 3', 'Show A'], ['Film', ''], ['Film', '']], array_map(fn ($p) => [$p['title'], $p['show']], $recent), 'latest episode per show; a remake is another movie');
+});
+
+test('stats: when and where the customer watches, and streaks', function () {
+    $play = fn (string $at, int $minutes, string $device = 'Living room TV', ?bool $transcode = false) => ['started_at' => $at, 'watched_ms' => $minutes * 60000, 'device' => $device, 'transcode' => $transcode];
+    $insights = stats()->insights([
+        $play('2026-11-14 21:00:00', 60),                  // Saturday evening
+        $play('2026-11-13 08:00:00', 30, 'Phone', true),   // Friday morning
+        $play('2026-11-12 14:00:00', 20),                  // Thursday afternoon
+        $play('2026-11-12 02:00:00', 10, 'Phone', null),   // Thursday night
+        $play('2026-11-01 20:00:00', 40, ''),              // Sunday, an earlier run of one day
+        $play('not a date', 999),
+    ], strtotime('2026-11-14 23:00:00'));
+    same([1 => 0, 2 => 0, 3 => 0, 4 => 30, 5 => 30, 6 => 60, 7 => 40], $insights['weekdays'], 'minutes per weekday');
+    same(['night' => 10, 'morning' => 30, 'afternoon' => 20, 'evening' => 100], $insights['dayparts'], 'minutes per time of day');
+    same(['Living room TV' => 2, 'Phone' => 2], $insights['devices'], 'devices, most used first');
+    same(75, $insights['direct_share'], 'direct play share of plays where it is known');
+    same([3, 3], [$insights['current_streak'], $insights['longest_streak']], 'three days in a row up to today');
+    same(0, stats()->insights([$play('2026-11-10 20:00:00', 5)], strtotime('2026-11-14 12:00:00'))['current_streak'], 'nothing since: no current streak');
+    same(1, stats()->insights([$play('2026-11-13 20:00:00', 5)], strtotime('2026-11-14 12:00:00'))['current_streak'], 'yesterday still counts before today\'s first play');
 });
 
 test('stats: boot adds "My stats" to the client area menu', function () {

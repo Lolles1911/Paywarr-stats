@@ -1,6 +1,7 @@
 """A stand-in for Tracearr, written from its source (apps/server/src/routes):
 
-* GET /api/v2/public/users, /users/:id/stats, /users/:id/history need
+* GET /api/v2/public/users, /users/:id/stats, /users/:id/history and
+  /watched-media need
   "Authorization: Bearer trr_pub_..." and answer as publicV2 does.
 * GET /api/v1/images/proxy needs no authentication (routes/images.ts).
 
@@ -15,7 +16,7 @@ from urllib.parse import parse_qs, urlparse
 
 
 def fresh_state() -> dict:
-    return {"key": "trr_pub_test", "identities": [], "stats": {}, "history": {}, "requests": []}
+    return {"key": "trr_pub_test", "identities": [], "stats": {}, "history": {}, "watched": {}, "requests": []}
 
 
 STATE = fresh_state()
@@ -95,7 +96,20 @@ class Handler(BaseHTTPRequestHandler):
             stats = STATE["stats"].get(parts[1], {})
             return self.send_json(200, {"user_id": parts[1], "windows": stats.get("windows", EMPTY_WINDOWS), "top_genres": stats.get("top_genres", [])})
         if method == "GET" and len(parts) == 3 and parts[0] == "users" and parts[2] == "history":
-            return self.send_json(200, {"data": STATE["history"].get(parts[1], [])[:page_size], "meta": {"nextCursor": None, "pageSize": page_size}})
+            if page_size > 100:
+                return self.send_json(400, {"message": "pageSize must be at most 100"})
+            plays = STATE["history"].get(parts[1], [])
+            start = int(query.get("cursor", "0") or 0)
+            nxt = str(start + page_size) if start + page_size < len(plays) else None
+            return self.send_json(200, {"data": plays[start:start + page_size], "meta": {"nextCursor": nxt, "pageSize": page_size}})
+        if method == "GET" and path == "/watched-media":
+            # Without user_id Tracearr answers for everyone; the stub does too.
+            kind = query.get("media_type", "")
+            people = [query["user_id"]] if "user_id" in query else list(STATE["watched"].keys())
+            rows = [row for person in people for row in STATE["watched"].get(person, {}).get(kind, [])]
+            if query.get("min_state") != "partial":
+                rows = [row for row in rows if row.get("watched_state") == "watched"]
+            return self.send_json(200, {"data": rows[:page_size], "meta": {"nextCursor": None, "pageSize": page_size}})
         return self.send_json(404, {"message": "Not found"})
 
 

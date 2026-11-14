@@ -11,9 +11,14 @@ client area. [Tracearr](https://github.com/connorgallopo/tracearr) collects
 what is watched on your Plex, Jellyfin and Emby servers; Paywarr Stats shows
 each customer their own part of it:
 
-- Watch time and plays for the last 7 days, the last 30 days and all time
-- Their favourite genres
-- What they watched recently, with posters, server, date and how much of it
+- Watch time and plays for the last 7 days, the last 30 days and all time,
+  plus movies and episodes watched and their current and longest streak
+- When they watch: per weekday and time of day, with their favourite of each
+- Their favourite genres, and where they watch (devices, and how much plays
+  directly without converting)
+- Their shows, with posters and how far they are ("14 of 18 episodes")
+- What they watched recently, with posters: each show or movie once, with
+  episode, date and how much of it
 
 Customers log in to Paymenter as usual, Discord included through
 [Paywarr](https://github.com/Lolles1911/Paywarr), and need no Tracearr account.
@@ -69,6 +74,10 @@ What changed in each version is on the
   number 1, 2, 3 … of the customer's own list, never for an address, so it
   can't be used to fetch anything else; only real images are passed on (no
   SVG). Throttled to 120 a minute per customer.
+- **Patterns** (weekdays, time of day, devices, streaks) come from the
+  customer's latest 200 plays per media server user, in Paymenter's time zone.
+- **A show on two servers** (Jellyfin and Emby) is shown once, with the
+  progress of the server where the customer got furthest.
 - **Tracearr down or a wrong key:** the customer sees "Your statistics can't
   be loaded right now", and the reason is in Paymenter's log.
 - **History:** Tracearr can import plays from before it was installed (e.g.
