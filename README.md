@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/banner.png" alt="Paywarr Stats" width="760"></p>
+
 # Paywarr Stats
 
 [![Tests](https://github.com/Lolles1911/Paywarr-stats/actions/workflows/tests.yml/badge.svg)](https://github.com/Lolles1911/Paywarr-stats/actions/workflows/tests.yml)
@@ -119,6 +121,7 @@ Paymenter and Laravel in `tests/shims.php`. GitHub runs them on every push.
 | `extensions/Others/PaywarrStats/lang/da.json` | Danish |
 | `install.sh` | Copies the extension into Paymenter |
 | `tests/` | Tracearr stub, stand-ins and scenarios |
+| `assets/` | Banner and the picture GitHub shows when the project is shared |
 
 ## License
 
