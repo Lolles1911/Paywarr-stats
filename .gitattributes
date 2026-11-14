@@ -1,0 +1,5 @@
+# Left out of the zip and tar.gz downloads on the Releases page. They stay in
+# the repository: GitHub runs the tests on every change.
+/tests          export-ignore
+/.github        export-ignore
+/.gitattributes export-ignore

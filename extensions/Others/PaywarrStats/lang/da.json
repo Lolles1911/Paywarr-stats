@@ -1,0 +1,16 @@
+{
+    "1 play": "1 afspilning",
+    ":count plays": ":count afspilninger",
+    ":hours h :minutes min": ":hours t :minutes min",
+    ":minutes min": ":minutes min",
+    "All time": "I alt",
+    "Favourite genres": "Yndlingsgenrer",
+    "Last 30 days": "Seneste 30 dage",
+    "Last 7 days": "Seneste 7 dage",
+    "M j, Y": "d.m.Y",
+    "My stats": "Min statistik",
+    "Nothing watched yet. Your statistics appear here once you start watching.": "Intet set endnu. Din statistik dukker op her, når du begynder at se.",
+    "Recently watched": "Senest set",
+    "Your statistics appear here once you have created your user and started watching.": "Din statistik dukker op her, når du har oprettet din bruger og er begyndt at se.",
+    "Your statistics can't be loaded right now. Please try again later.": "Din statistik kan ikke hentes lige nu. Prøv igen senere."
+}

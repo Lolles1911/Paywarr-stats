@@ -1,0 +1,45 @@
+name: Release
+
+# A tag like v1.10.0 (pushed, or made with "Draft a new release" on GitHub)
+# is checked: it must match the version in extensions/Others/PaywarrStats/PaywarrStats.php,
+# and the tests must pass. A pushed tag gets its release made here.
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag matches the extension's version
+        run: |
+          version="$(grep -oP "version: '\K[^']+" extensions/Others/PaywarrStats/PaywarrStats.php)"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "The tag is $GITHUB_REF_NAME, but PaywarrStats.php says version $version." >&2
+            exit 1
+          fi
+
+  tests:
+    needs: version
+    uses: ./.github/workflows/tests.yml
+
+  release:
+    needs: tests
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # A release made on github.com already exists; then this only checks.
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists."
+          else
+            gh release create "$GITHUB_REF_NAME" --title "Paywarr Stats $GITHUB_REF_NAME" --generate-notes --verify-tag
+          fi
