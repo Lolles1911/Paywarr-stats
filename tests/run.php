@@ -583,7 +583,8 @@ test('overview: only staff, the page escapes what it prints, and Danish', functi
     overviewFixture();
     same([false, false, true], [PaywarrStats::isAdmin(null), PaywarrStats::isAdmin(new FakeUser(false)), PaywarrStats::isAdmin(new FakeUser(true))], 'admin.services.view');
     $html = overviewStats()->adminHtml(overviewStats()->overview());
-    foreach (['Stats overview', 'Streaming now', 'Mette Test', 'Silo Standard', 'No subscription', 'Converting', 'Most watched, last 30 days', 'Most active, last 30 days', 'Plays per day'] as $needle) {
+    foreach (['Stats overview', 'Streaming now', 'Mette Test', 'Silo Standard', 'No subscription', 'Converting', 'Most watched, last 30 days', 'Most active, last 30 days', 'Plays per day',
+        'class="ps-server"', 'Wafflehub Jellyfin</span>', '2 Silo, 1 Emby, 1 Wafflehub Jellyfin'] as $needle) {
         ok(str_contains($html, $needle), "shows \"$needle\"");
     }
     ok(!str_contains($html, '<script>x') && !str_contains($html, '<b>evil'), 'escaped');

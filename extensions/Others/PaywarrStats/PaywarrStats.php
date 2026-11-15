@@ -22,7 +22,7 @@ use Throwable;
 #[ExtensionMeta(
     name: 'Paywarr Stats',
     description: 'Shows each customer their own watch statistics from Tracearr or Silo, on a page in the client area.',
-    version: '1.5.1',
+    version: '1.5.2',
     author: 'Paywarr',
     url: 'https://github.com/Lolles1911/Paywarr-stats',
 )]
@@ -865,8 +865,11 @@ class PaywarrStats extends Extension
         $plays = array_sum($overview['days']);
         $watch = array_sum(array_column($overview['people'], 'watch_ms'));
         $watching = count(array_filter($overview['people'], fn ($p) => empty($p['unknown'])));
+        $servers = array_count_values(array_filter(array_column($streams, 'server')));
+        uksort($servers, fn ($a, $b) => [$servers[$b], $a] <=> [$servers[$a], $b]); // most first, then by name
+        $perServer = implode(', ', array_map(fn ($name, $count) => $count . ' ' . $name, array_keys($servers), $servers));
         $cards = [
-            [self::t('Streaming now'), (string) count($streams), $converting ? self::t(':count converting', ['count' => $converting]) : self::t('all played directly')],
+            [self::t('Streaming now'), (string) count($streams), implode(' · ', array_filter([$perServer, $converting ? self::t(':count converting', ['count' => $converting]) : ($streams ? self::t('all played directly') : '')]))],
             [self::t('Plays'), number_format($plays, 0, self::t('.'), self::t(',')), self::t('Last 30 days')],
             [self::t('Watch time'), $this->duration($watch), self::t('Last 30 days')],
             [self::t('Customers watching'), $watching . ' / ' . $overview['paying'], self::t('of the active subscriptions, last 30 days')],
@@ -885,11 +888,12 @@ class PaywarrStats extends Extension
             $html .= '<div class="ps-shows">';
             foreach ($streams as $stream) {
                 $method = $stream['transcode'] ? '<span class="ps-badge ps-badge-warn">' . $e(self::t('Converting')) . '</span>' : '<span class="ps-badge ps-badge-ok">' . $e(self::t('Direct')) . '</span>';
-                $html .= '<div class="ps-card ps-show">' . $poster($stream['poster'], $stream['title'], 'ps-thumb')
+                $html .= '<div class="ps-card ps-show ps-stream">' . ($stream['server'] !== '' ? '<span class="ps-server">' . $this->icon('where-you-watch') . $e($stream['server']) . '</span>' : '')
+                    . $poster($stream['poster'], $stream['title'], 'ps-thumb')
                     . '<div class="ps-grow">' . $customer($stream['customer'])
                     . '<div class="ps-small ps-clip ps-gap">' . ($stream['paused'] ? '<span class="ps-badge">' . $e(self::t('Paused')) . '</span> ' : '▶ ') . $e($stream['title']) . '</div>'
                     . ($stream['sub'] !== '' ? '<div class="ps-muted ps-tiny ps-clip">' . $e($stream['sub']) . '</div>' : '')
-                    . '<div class="ps-muted ps-tiny ps-clip">' . $method . ' ' . $e(implode(' · ', array_filter([$stream['device'], $stream['server']]))) . '</div>'
+                    . '<div class="ps-muted ps-tiny ps-clip">' . $method . ' ' . $e($stream['device']) . '</div>'
                     . ($stream['progress'] !== null ? $bar($stream['progress'] / 100) : '') . '</div></div>';
             }
             $html .= '</div>';
@@ -943,6 +947,9 @@ class PaywarrStats extends Extension
             . '#paywarr-stats .ps-badge{display:inline-block;padding:.05rem .45rem;border-radius:9999px;font-size:.7rem;font-weight:600;border:1px solid currentColor}'
             . '#paywarr-stats .ps-badge-ok{color:hsl(142 60% 50%)}#paywarr-stats .ps-badge-warn{color:hsl(var(--color-primary))}'
             . '#paywarr-stats .ps-gap{margin-top:.35rem}'
+            . '#paywarr-stats .ps-stream{position:relative;padding-top:2.3rem}'
+            . '#paywarr-stats .ps-server{position:absolute;top:.6rem;left:.8rem;right:.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.75rem;font-weight:700;letter-spacing:.02em;color:hsl(var(--color-primary))}'
+            . '#paywarr-stats .ps-server .ps-ico{width:1em;height:1em;margin-right:.3rem}'
             . '#paywarr-stats .ps-days{display:flex;align-items:flex-end;gap:.25rem;height:9rem}'
             . '#paywarr-stats .ps-days .ps-col{min-width:0}#paywarr-stats .ps-days .ps-colbar{max-width:none}'
             . '#paywarr-stats .ps-axis{display:flex;justify-content:space-between;margin-top:.5rem}'
