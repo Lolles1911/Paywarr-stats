@@ -1,0 +1,27 @@
+name: Release notes
+
+# The text of each version in CHANGELOG.md, on its release: when a release is
+# published (also one made on github.com), and when CHANGELOG.md changes,
+# which also fills in releases made before.
+on:
+  release:
+    types: [published]
+  push:
+    branches: [main]
+    paths: [CHANGELOG.md]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  notes:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: CHANGELOG.md onto the releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/release-notes.sh ${{ github.event_name == 'release' && github.event.release.tag_name || '' }}
