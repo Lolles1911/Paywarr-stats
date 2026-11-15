@@ -81,6 +81,18 @@ class TracearrClient
     }
 
     /**
+     * The poster of a title (a movie, or a show by its episodes), from its
+     * latest play: the path on Tracearr's image proxy, or null.
+     */
+    public function mediaPoster(string $mediaId): ?string
+    {
+        $play = $this->call('/media/' . rawurlencode($mediaId) . '/history', ['pageSize' => 1])['data'][0] ?? null;
+        $poster = (string) ($play['poster_url'] ?? '');
+
+        return str_starts_with($poster, '/api/v1/images/proxy?') ? $poster : null;
+    }
+
+    /**
      * Plays per day over the last 30 days, per server: rows of date and count.
      * From the public API v1 (/api/v1/public/activity), which the same key opens.
      */

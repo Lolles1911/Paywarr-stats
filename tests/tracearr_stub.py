@@ -25,7 +25,7 @@ from urllib.parse import parse_qs, urlparse
 
 def fresh_state() -> dict:
     return {"key": "trr_pub_test", "identities": [], "stats": {}, "history": {}, "watched": {}, "requests": [],
-            "streams": [], "top_media": {"movie": [], "show": []}, "activity": [],
+            "streams": [], "top_media": {"movie": [], "show": []}, "activity": [], "media_history": {},
             "silo": {"summary": {}, "history": {}, "items": {}, "ignore_user_filter": False,
                      "profiles": [{"id": "p-owner", "is_primary": True, "has_pin": False}, {"id": "p-kid", "is_primary": False, "has_pin": False}]}}
 
@@ -122,6 +122,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {"data": page, "meta": {"nextCursor": nxt, "pageSize": page_size}})
         if method == "GET" and path == "/streams":
             return self.send_json(200, {"data": STATE["streams"], "summary": {"total": len(STATE["streams"])}})
+        if method == "GET" and len(parts) == 3 and parts[0] == "media" and parts[2] == "history":
+            rows = STATE["media_history"].get(parts[1], [])[:page_size]
+            return self.send_json(200, {"data": rows, "meta": {"nextCursor": None, "pageSize": page_size}})
         if method == "GET" and path == "/top-media":
             if query.get("media_type") not in ("movie", "show") or not 1 <= int(query.get("days", 30)) <= 365:
                 return self.send_json(400, {"message": "Invalid query parameters"})

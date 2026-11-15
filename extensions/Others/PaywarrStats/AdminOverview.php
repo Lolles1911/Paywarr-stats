@@ -79,7 +79,7 @@ class AdminOverview
                 foreach (['movie', 'show'] as $type) {
                     foreach ($this->tracearr->topMedia($type, 30) as $title) {
                         $name = (string) ($title['title'] ?? '') . ($type === 'movie' && !empty($title['year']) ? ' (' . $title['year'] . ')' : '');
-                        $this->addTitle($titles, $name, $type, (int) ($title['plays'] ?? 0), (int) ($title['watch_time_ms'] ?? 0), '');
+                        $this->addTitle($titles, $name, $type, (int) ($title['plays'] ?? 0), (int) ($title['watch_time_ms'] ?? 0), '', (string) ($title['media_id'] ?? ''));
                     }
                 }
             });
@@ -116,6 +116,18 @@ class AdminOverview
         uasort($titles, fn ($a, $b) => [$b['plays'], $b['watch_ms']] <=> [$a['plays'], $a['watch_ms']]);
         uasort($people, fn ($a, $b) => [$b['watch_ms'], $b['plays']] <=> [$a['watch_ms'], $a['plays']]);
         $titles = array_slice(array_values($titles), 0, 12);
+        // Tracearr's top list has no posters: one look per title shown, at its latest play.
+        foreach ($titles as &$title) {
+            if ($title['poster_path'] === '' && $title['tracearr_id'] !== '' && $this->tracearr) {
+                try {
+                    $title['poster_path'] = (string) $this->tracearr->mediaPoster($title['tracearr_id']);
+                } catch (Throwable $e) {
+                    // No poster; the letter stays.
+                }
+            }
+            unset($title['tracearr_id']);
+        }
+        unset($title);
         $people = array_values(array_filter($people, fn ($person) => $person['plays'] > 0));
 
         // Posters by number, as on "My stats".
@@ -209,13 +221,16 @@ class AdminOverview
         return $customer ?? ['name' => $username !== '' ? $username : '?', 'email' => '', 'products' => [], 'status' => '', 'paid_until' => null, 'unknown' => true];
     }
 
-    private function addTitle(array &$titles, string $title, string $type, int $plays, int $ms, string $poster): void
+    private function addTitle(array &$titles, string $title, string $type, int $plays, int $ms, string $poster, string $tracearrId = ''): void
     {
         if ($title === '') {
             return;
         }
         $key = strtolower($title);
-        $titles[$key] ??= ['title' => $title, 'type' => $type, 'plays' => 0, 'watch_ms' => 0, 'poster_path' => ''];
+        $titles[$key] ??= ['title' => $title, 'type' => $type, 'plays' => 0, 'watch_ms' => 0, 'poster_path' => '', 'tracearr_id' => ''];
+        if ($titles[$key]['tracearr_id'] === '') {
+            $titles[$key]['tracearr_id'] = $tracearrId;
+        }
         $titles[$key]['plays'] += $plays;
         $titles[$key]['watch_ms'] += $ms;
         if ($titles[$key]['poster_path'] === '') {

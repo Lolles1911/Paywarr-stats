@@ -530,6 +530,7 @@ function overviewFixture(): void
             ['server_type' => 'emby', 'server_name' => 'Emby', 'username' => '<b>evil</b>', 'media_title' => '<script>x</script>', 'duration_ms' => 0, 'state' => 'playing', 'is_transcode' => true, 'poster_url' => 'http://evil.example.com/x']],
         'top_media' => ['movie' => [['media_id' => 'm', 'title' => 'Arrival Point', 'year' => null, 'plays' => 2, 'watch_time_ms' => 3600000]], 'show' => [['media_id' => 's', 'title' => 'The Show', 'plays' => 6, 'watch_time_ms' => 9000000]]],
         'activity' => [['date' => date('Y-m-d') . ' 00:00:00', 'serverId' => 'a', 'count' => 4], ['date' => '1999-01-01 00:00:00', 'serverId' => 'a', 'count' => 99]],
+        'media_history' => ['s' => [['media_title' => 'Pilot', 'poster_url' => '/api/v1/images/proxy?url=theshow']], 'm' => [['poster_url' => 'http://evil.example.com/p']]],
     ]);
 }
 
@@ -549,7 +550,7 @@ test('overview: who streams right now, as the customers behind the users', funct
     same([true, 'stranger', true], [$streams['Arrival Point']['customer']['unknown'] ?? false, $streams['Arrival Point']['customer']['name'], $streams['Arrival Point']['transcode']], 'a Silo user without subscription is shown as such');
     $posters = $overview['posters'];
     sort($posters);
-    same(['/api/v1/images/proxy?url=show', 'silo:ep-3', 'silo:mov-1', 'silo:ser-1'], $posters, 'posters by number: Silo\'s and Tracearr\'s, nothing else');
+    same(['/api/v1/images/proxy?url=show', '/api/v1/images/proxy?url=theshow', 'silo:ep-3', 'silo:mov-1', 'silo:ser-1'], $posters, 'posters by number: Silo\'s and Tracearr\'s, nothing else');
     ok(!in_array('http://evil.example.com/x', $overview['posters'], true), 'never an outside address');
 });
 
@@ -559,6 +560,8 @@ test('overview: most watched titles, both sources together, and plays per day', 
     same([['The Show', 6], ['Arrival Point', 7], ['Glass Harbor', 3]], array_map(fn ($t) => [$t['title'], $t['plays']], [$overview['titles'][1], $overview['titles'][0], $overview['titles'][2]]), 'merged by title');
     same('Arrival Point', $overview['titles'][0]['title'], 'most plays first');
     ok($overview['titles'][0]['poster'] > 0, 'Silo\'s poster for a title Tracearr also has');
+    same('/api/v1/images/proxy?url=theshow', $overview['posters'][$overview['titles'][1]['poster'] - 1] ?? null, 'Tracearr\'s titles get the poster of their latest play');
+    ok(!in_array('http://evil.example.com/p', $overview['posters'], true), 'only from Tracearr\'s image proxy');
     same(3 + 4, array_sum($overview['days']), 'Silo\'s hourly buckets and Tracearr\'s days, last 30 days only');
     same(30, count($overview['days']), '30 days');
     $v1 = array_values(array_filter(state()['requests'], fn ($r) => $r['path'] === 'v1:/activity'));

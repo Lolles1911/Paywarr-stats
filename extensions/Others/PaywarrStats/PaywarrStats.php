@@ -22,7 +22,7 @@ use Throwable;
 #[ExtensionMeta(
     name: 'Paywarr Stats',
     description: 'Shows each customer their own watch statistics from Tracearr or Silo, on a page in the client area.',
-    version: '1.5.0',
+    version: '1.5.1',
     author: 'Paywarr',
     url: 'https://github.com/Lolles1911/Paywarr-stats',
 )]
@@ -898,10 +898,14 @@ class PaywarrStats extends Extension
         // Plays per day
         $max = max(1, max($overview['days']));
         $html .= '<h2 class="ps-h">' . $this->icon('when-you-watch') . $e(self::t('Plays per day')) . '</h2><div class="ps-card"><div class="ps-days">';
-        $i = 0;
         foreach ($overview['days'] as $day => $count) {
-            $label = $i++ % 5 === 0 ? date(self::t('j/n'), strtotime($day)) : '';
-            $html .= '<div class="ps-col" title="' . $e(date(self::t('M j, Y'), strtotime($day)) . ': ' . $count) . '"><span class="ps-colbar"><span style="height:' . max(2, (int) round(100 * $count / $max)) . '%"></span></span><span class="ps-tiny">' . $e($label) . '</span></div>';
+            $html .= '<div class="ps-col" title="' . $e(date(self::t('M j, Y'), strtotime($day)) . ': ' . $count) . '"><span class="ps-colbar"><span style="height:' . ($count > 0 ? max(3, (int) round(100 * $count / $max)) : 0) . '%"></span></span></div>';
+        }
+        // Three dates under the bars, so they never run into each other on a phone.
+        $dates = array_keys($overview['days']);
+        $html .= '</div><div class="ps-axis ps-tiny">';
+        foreach ([$dates[0], $dates[intdiv(count($dates), 2)], end($dates)] as $day) {
+            $html .= '<span>' . $e(date(self::t('j/n'), strtotime($day))) . '</span>';
         }
         $html .= '</div></div>';
 
@@ -940,7 +944,8 @@ class PaywarrStats extends Extension
             . '#paywarr-stats .ps-badge-ok{color:hsl(142 60% 50%)}#paywarr-stats .ps-badge-warn{color:hsl(var(--color-primary))}'
             . '#paywarr-stats .ps-gap{margin-top:.35rem}'
             . '#paywarr-stats .ps-days{display:flex;align-items:flex-end;gap:.25rem;height:9rem}'
-            . '#paywarr-stats .ps-days .ps-col{min-width:0}'
+            . '#paywarr-stats .ps-days .ps-col{min-width:0}#paywarr-stats .ps-days .ps-colbar{max-width:none}'
+            . '#paywarr-stats .ps-axis{display:flex;justify-content:space-between;margin-top:.5rem}'
             . '#paywarr-stats .ps-rank{position:absolute;top:.4rem;left:.4rem;min-width:1.6rem;height:1.6rem;padding:0 .35rem;display:flex;align-items:center;justify-content:center;border-radius:9999px;font-weight:800;font-size:.8rem;background:hsl(var(--color-primary));color:hsl(var(--color-background))}'
             . '#paywarr-stats .ps-table{padding:.4rem 1.3rem}'
             . '#paywarr-stats .ps-row{display:flex;gap:1rem;align-items:center;padding:.8rem 0;border-bottom:1px solid hsl(var(--color-neutral))}'
@@ -985,7 +990,7 @@ class PaywarrStats extends Extension
             . '#paywarr-stats .ps-spot-cover{position:relative;flex:none;display:block;width:4.6rem;aspect-ratio:2/3;overflow:hidden;border-radius:.6rem;box-shadow:0 8px 22px rgb(0 0 0 / .35);background:linear-gradient(160deg,hsl(var(--color-primary) / .35),hsl(var(--color-neutral)))}'
             . '#paywarr-stats .ps-spot-cover img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}'
             . '#paywarr-stats .ps-clamp{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}'
-            . '#paywarr-stats .ps-ico{width:1.15em;height:1.15em;margin-right:.45rem;vertical-align:-.2em;fill:none;stroke:hsl(var(--color-primary));stroke-width:2;stroke-linecap:round;stroke-linejoin:round}'
+            . '#paywarr-stats .ps-ico{display:inline-block;width:1.15em;height:1.15em;margin-right:.45rem;vertical-align:-.2em;fill:none;stroke:hsl(var(--color-primary));stroke-width:2;stroke-linecap:round;stroke-linejoin:round}'
             . '#paywarr-stats .ps-label{font-size:.8rem;text-transform:uppercase;letter-spacing:.06em;color:hsl(var(--color-muted, var(--color-base)))}'
             . '#paywarr-stats .ps-big{font-size:clamp(2.2rem,6vw,3.4rem);font-weight:800;line-height:1.1;margin:.3rem 0}'
             . '#paywarr-stats .ps-value{font-size:1.55rem;font-weight:700;margin:.3rem 0}'
