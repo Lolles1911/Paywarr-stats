@@ -11,3 +11,9 @@ Route::middleware(['web', 'auth'])->get('/stats', [PaywarrStats::class, 'page'])
 Route::middleware(['web', 'auth', 'throttle:120,1'])->get('/stats/poster/{number}', [PaywarrStats::class, 'poster'])
     ->whereNumber('number')
     ->name('extensions.paywarr-stats.poster');
+
+// The administrators' overview (PaywarrStats::isAdmin() checks the permission).
+Route::middleware(['web', 'auth'])->get('/stats/admin', [PaywarrStats::class, 'adminPage'])->name('extensions.paywarr-stats.admin');
+Route::middleware(['web', 'auth', 'throttle:240,1'])->get('/stats/admin/poster/{number}', [PaywarrStats::class, 'adminPoster'])
+    ->whereNumber('number')
+    ->name('extensions.paywarr-stats.admin.poster');

@@ -73,6 +73,28 @@ cd /opt/paywarr-stats && git pull && bash install.sh /opt/paymenter
 What changed in each version is on the
 [Releases](https://github.com/Lolles1911/Paywarr-stats/releases) page.
 
+## Stats overview for staff
+
+Paymenter staff (anyone whose role may view services, `admin.services.view`)
+also get **Stats overview** in the menu, at `/stats/admin`. Customers never see
+it; for them the address doesn't exist. It shows, for Silo and Tracearr
+together:
+
+- **Streaming now:** who, as the Paymenter customer with their subscription,
+  status and paid-until date; what, on which device and server, played
+  directly or converted, how far
+- **Plays per day** over the last 30 days
+- **Most watched** titles of the last 30 days, with posters
+- **Most active** customers of the last 30 days, by watch time
+
+Media server users that no subscription has are marked **No subscription**,
+which makes left-over or unpaid accounts easy to spot. The overview is kept
+for a minute. If Silo or Tracearr can't be reached, the other is still shown,
+with the reason on top. Silo's part needs a key with full access or
+`admin:monitor:read`.
+
+![The stats overview](screenshots/overview.png)
+
 ## How it works
 
 - **Silo** customers' numbers come from Silo itself: totals from its watch
@@ -156,7 +178,8 @@ Paymenter and Laravel in `tests/shims.php`. GitHub runs them on every push.
 | `extensions/Others/PaywarrStats/PaywarrStats.php` | The extension: settings, menu item, page, posters |
 | `extensions/Others/PaywarrStats/TracearrClient.php` | The calls to Tracearr |
 | `extensions/Others/PaywarrStats/SiloClient.php` | The calls to Silo |
-| `extensions/Others/PaywarrStats/routes.php` | `/stats` and `/stats/poster/{number}` |
+| `extensions/Others/PaywarrStats/AdminOverview.php` | The staff overview: gathers Silo and Tracearr, linked to customers |
+| `extensions/Others/PaywarrStats/routes.php` | `/stats`, `/stats/admin` and their posters |
 | `extensions/Others/PaywarrStats/lang/da.json` | Danish |
 | `install.sh` | Copies the extension into Paymenter |
 | `tools/stats-check.php` | Checks My stats for one customer, step by step |

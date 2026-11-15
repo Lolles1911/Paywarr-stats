@@ -44,6 +44,11 @@ namespace App\Models {
         {
             return new ServiceQuery(fn ($row) => $row->user_id === $value);
         }
+
+        public static function with($relations): ServiceQuery
+        {
+            return new ServiceQuery(fn ($row) => true);
+        }
     }
 
     class ServiceQuery
@@ -110,6 +115,12 @@ namespace Illuminate\Foundation {
 }
 
 namespace {
+    /** config(): Laravel's, with only the default answered. */
+    function config($key = null, $default = null)
+    {
+        return $default;
+    }
+
     function app($abstract = null)
     {
         return \Illuminate\Foundation\FakeApplication::$instance ??= new \Illuminate\Foundation\FakeApplication;

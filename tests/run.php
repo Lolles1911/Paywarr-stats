@@ -8,6 +8,7 @@ require __DIR__ . '/shims.php';
 require __DIR__ . '/../extensions/Others/PaywarrStats/TracearrException.php';
 require __DIR__ . '/../extensions/Others/PaywarrStats/TracearrClient.php';
 require __DIR__ . '/../extensions/Others/PaywarrStats/SiloClient.php';
+require __DIR__ . '/../extensions/Others/PaywarrStats/AdminOverview.php';
 require __DIR__ . '/../extensions/Others/PaywarrStats/PaywarrStats.php';
 
 use Paymenter\Extensions\Others\PaywarrStats\PaywarrStats;
@@ -472,21 +473,161 @@ test('stats: a first, short play reads well: "under 1 min", no "0 min a day", th
     ok(str_contains($html, 'based on your latest play.'), 'one play, not "1 plays"');
 });
 
-test('stats: boot adds "My stats" to the client area menu', function () {
+/* ---------- the administrators' overview ---------- */
+
+/** A Paymenter user; staff have admin.services.view. */
+class FakeUser
+{
+    public function __construct(private bool $staff) {}
+
+    public function hasPermission($permission): bool
+    {
+        return $this->staff && $permission === 'admin.services.view';
+    }
+}
+
+/** Mette on Silo (account 7, active), Ole on Jellyfin (suspended), and Silo account 9 that no subscription has. */
+function overviewFixture(): void
+{
+    tracearrWithCustomers();
+    siloWithCustomers();
+    $subscription = fn (string $first, string $email, string $product, string $status, array $properties) => (object) [
+        'user_id' => $email, 'status' => $status, 'expires_at' => '2026-12-01 00:00:00',
+        'user' => (object) ['first_name' => $first, 'last_name' => 'Test', 'email' => $email],
+        'product' => (object) ['name' => $product, 'server' => (object) ['extension' => 'Wizarr']],
+        'properties' => new \App\Models\PropertyList($properties),
+    ];
+    \App\Models\Service::$rows = [
+        $subscription('Mette', 'mette@example.com', 'Silo Standard', 'active', ['wizarr_users:1' => '7:mette:silo']),
+        $subscription('Ole', 'ole@example.com', 'Jellyfin Plus', 'suspended', ['wizarr_users:1' => '3:ole:jellyfin']),
+        $subscription('Other', 'other@example.com', 'Plex', 'active', ['wizarr_users:2' => '4:other:plex']),
+        $subscription('Two', 'two@example.com', 'Both', 'active', ['wizarr_users:1' => '5:two:jellyfin', 'wizarr_users:4' => '6:two:emby']),
+        // Another extension's service is never read, whatever its properties look like.
+        (object) ['user_id' => 'x', 'status' => 'active', 'expires_at' => null, 'user' => (object) ['email' => 'pt@example.com'], 'product' => (object) ['name' => 'Pterodactyl', 'server' => (object) ['extension' => 'Pterodactyl']], 'properties' => new \App\Models\PropertyList(['wizarr_users:1' => '7:mette:silo'])],
+    ];
+    stub('/_test/set', ['identities' => [...state()['identities'], identity('u-two', [['jellyfin', 'two'], ['emby', 'two']])],
+        'stats' => state()['stats'] + ['u-two' => ['windows' => windows(1, 1, 2, 2, 3, 3), 'top_genres' => []]]]);
+    $hour = gmdate('Y-m-d\TH:00:00.000\Z', time() - 3600);
+    stub('/_test/set', [
+        'silo' => [
+            'sessions' => [
+                ['session_id' => 's1', 'user_id' => '7', 'username' => 'mette', 'content_id' => 'ep-3', 'media_title' => 'Episode 3', 'media_type' => 'episode', 'series_name' => 'Glass Harbor', 'season_number' => 1, 'episode_number' => 3,
+                    'episode_name' => 'Undertow', 'position_seconds' => 600, 'file_duration' => 2400, 'is_paused' => false, 'video_decision' => 'direct', 'client_label' => 'Living room TV'],
+                ['session_id' => 's2', 'user_id' => '9', 'username' => 'stranger', 'content_id' => 'mov-1', 'media_title' => 'Arrival Point', 'media_type' => 'movie', 'position_seconds' => 60, 'file_duration' => 6000,
+                    'is_paused' => true, 'video_decision' => 'transcode', 'client_name' => 'Silo Web'],
+            ],
+            'top' => [
+                'titles' => [['media_item_id' => 'mov-1', 'title' => 'Arrival Point', 'media_type' => 'movie', 'plays' => 5, 'total_seconds' => 18000], ['media_item_id' => 'ser-1', 'title' => 'Glass Harbor', 'media_type' => 'series', 'plays' => 3, 'total_seconds' => 7200]],
+                'profiles' => [['user_id' => '7', 'username' => 'mette', 'profile_id' => 'a', 'profile_name' => 'Main', 'plays' => 4, 'total_seconds' => 7200],
+                    ['user_id' => '7', 'username' => 'mette', 'profile_id' => 'b', 'profile_name' => 'Kids', 'plays' => 1, 'total_seconds' => 600],
+                    ['user_id' => '9', 'username' => 'stranger', 'profile_id' => 'c', 'profile_name' => 'S', 'plays' => 2, 'total_seconds' => 3600],
+                    ['user_id' => '10', 'username' => 'idle', 'profile_id' => 'd', 'profile_name' => 'I', 'plays' => 0, 'total_seconds' => 0]],
+            ],
+            'buckets' => [['hour' => $hour, 'direct' => 2, 'remux' => 0, 'transcode' => 1], ['hour' => gmdate('Y-m-d\TH:00:00.000\Z', time() - 40 * 86400), 'direct' => 50, 'remux' => 0, 'transcode' => 0]],
+        ],
+        'streams' => [['server_type' => 'jellyfin', 'server_name' => 'Wafflehub Jellyfin', 'username' => 'Ole', 'media_title' => 'Pilot', 'show_title' => 'The Show', 'season_number' => 1, 'episode_number' => 1,
+            'duration_ms' => 3600000, 'progress_ms' => 1800000, 'state' => 'paused', 'is_transcode' => false, 'device' => 'iPhone', 'poster_url' => '/api/v1/images/proxy?url=show'],
+            ['server_type' => 'emby', 'server_name' => 'Emby', 'username' => '<b>evil</b>', 'media_title' => '<script>x</script>', 'duration_ms' => 0, 'state' => 'playing', 'is_transcode' => true, 'poster_url' => 'http://evil.example.com/x']],
+        'top_media' => ['movie' => [['media_id' => 'm', 'title' => 'Arrival Point', 'year' => null, 'plays' => 2, 'watch_time_ms' => 3600000]], 'show' => [['media_id' => 's', 'title' => 'The Show', 'plays' => 6, 'watch_time_ms' => 9000000]]],
+        'activity' => [['date' => date('Y-m-d') . ' 00:00:00', 'serverId' => 'a', 'count' => 4], ['date' => '1999-01-01 00:00:00', 'serverId' => 'a', 'count' => 99]],
+    ]);
+}
+
+function overviewStats(array $config = []): PaywarrStats
+{
+
+    return siloStats($config);
+}
+
+test('overview: who streams right now, as the customers behind the users', function () {
+    overviewFixture();
+    $overview = overviewStats()->overview();
+    $streams = array_column($overview['streams'], null, 'title');
+    same(['Mette Test', ['Silo Standard'], 'active', '2026-12-01'], [$streams['Glass Harbor']['customer']['name'], $streams['Glass Harbor']['customer']['products'], $streams['Glass Harbor']['customer']['status'], $streams['Glass Harbor']['customer']['paid_until']], 'Silo account 7 is Mette');
+    same(['S01E03 · Undertow', 'Living room TV', false, false, 25], [$streams['Glass Harbor']['sub'], $streams['Glass Harbor']['device'], $streams['Glass Harbor']['transcode'], $streams['Glass Harbor']['paused'], $streams['Glass Harbor']['progress']], 'what and how');
+    same(['Ole Test', 'suspended', true, 50], [$streams['The Show']['customer']['name'], $streams['The Show']['customer']['status'], $streams['The Show']['paused'], $streams['The Show']['progress']], 'Jellyfin user ole is Ole, paused, half way');
+    same([true, 'stranger', true], [$streams['Arrival Point']['customer']['unknown'] ?? false, $streams['Arrival Point']['customer']['name'], $streams['Arrival Point']['transcode']], 'a Silo user without subscription is shown as such');
+    $posters = $overview['posters'];
+    sort($posters);
+    same(['/api/v1/images/proxy?url=show', 'silo:ep-3', 'silo:mov-1', 'silo:ser-1'], $posters, 'posters by number: Silo\'s and Tracearr\'s, nothing else');
+    ok(!in_array('http://evil.example.com/x', $overview['posters'], true), 'never an outside address');
+});
+
+test('overview: most watched titles, both sources together, and plays per day', function () {
+    overviewFixture();
+    $overview = overviewStats()->overview();
+    same([['The Show', 6], ['Arrival Point', 7], ['Glass Harbor', 3]], array_map(fn ($t) => [$t['title'], $t['plays']], [$overview['titles'][1], $overview['titles'][0], $overview['titles'][2]]), 'merged by title');
+    same('Arrival Point', $overview['titles'][0]['title'], 'most plays first');
+    ok($overview['titles'][0]['poster'] > 0, 'Silo\'s poster for a title Tracearr also has');
+    same(3 + 4, array_sum($overview['days']), 'Silo\'s hourly buckets and Tracearr\'s days, last 30 days only');
+    same(30, count($overview['days']), '30 days');
+    $v1 = array_values(array_filter(state()['requests'], fn ($r) => $r['path'] === 'v1:/activity'));
+    same('month', $v1[0]['query']['period'] ?? null, 'Tracearr\'s month of activity');
+});
+
+test('overview: most active customers, with their subscription; users without one are flagged', function () {
+    overviewFixture();
+    $people = overviewStats()->overview()['people'];
+    same([['Ole Test', 99, 99 * 3600000], ['Mette Test', 5, 7800000], ['Two Test', 2, 2 * 3600000], ['stranger', 2, 3600000]], array_map(fn ($p) => [$p['name'], $p['plays'], $p['watch_ms']], $people),
+        'by watch time; two Silo profiles are one customer; one Tracearr identity with two noted accounts counts once; nobody without plays');
+    same([true], [$people[3]['unknown']], 'no subscription');
+    same(3, overviewStats()->overview()['paying'], 'customers with an active subscription (Mette, Other, Two)');
+    $asked = array_values(array_unique(array_column(array_filter(state()['requests'], fn ($r) => str_starts_with($r['path'], '/users/') && str_ends_with($r['path'], '/stats')), 'path')));
+    same(['/users/u-ole/stats', '/users/u-two/stats'], $asked, 'Tracearr is only asked about users Paywarr noted for a customer, once each');
+});
+
+test('overview: only staff, the page escapes what it prints, and Danish', function () {
+    overviewFixture();
+    same([false, false, true], [PaywarrStats::isAdmin(null), PaywarrStats::isAdmin(new FakeUser(false)), PaywarrStats::isAdmin(new FakeUser(true))], 'admin.services.view');
+    $html = overviewStats()->adminHtml(overviewStats()->overview());
+    foreach (['Stats overview', 'Streaming now', 'Mette Test', 'Silo Standard', 'No subscription', 'Converting', 'Most watched, last 30 days', 'Most active, last 30 days', 'Plays per day'] as $needle) {
+        ok(str_contains($html, $needle), "shows \"$needle\"");
+    }
+    ok(!str_contains($html, '<script>x') && !str_contains($html, '<b>evil'), 'escaped');
+    ok(!str_contains($html, 'silo:') && !str_contains($html, 'images/proxy') && !str_contains($html, 'evil.example.com'), 'no addresses');
+    ok(str_contains(inLocale('da', fn () => overviewStats()->adminHtml(overviewStats()->overview())), 'Ser lige nu'), 'Danish');
+});
+
+test('overview: one source down still shows the other, with the reason', function () {
+    overviewFixture();
+    $overview = overviewStats(['tracearr_url' => 'http://127.0.0.1:1'])->overview();
+    ok(str_contains(implode(' ', $overview['errors']), 'Tracearr: Could not reach Tracearr'), 'reason: ' . json_encode($overview['errors']));
+    $titles = array_column($overview['streams'], 'title');
+    sort($titles);
+    same(['Arrival Point', 'Glass Harbor'], $titles, 'Silo still answers');
+    \Illuminate\Support\Facades\Cache::$store = [];
+    same([], overviewStats(['silo_url' => '', 'tracearr_url' => ''])->overview()['streams'], 'nothing set up: an empty overview, no error');
+});
+
+test('overview: kept for a minute', function () {
+    overviewFixture();
+    overviewStats()->overview();
+    same(60, \Illuminate\Support\Facades\Cache::$ttl['paywarr-stats:admin:v1'], 'a minute');
+    stub('/_test/clear-requests');
+    overviewStats()->overview();
+    same([], state()['requests'], 'asked nothing the second time');
+});
+
+test('stats: boot adds "My stats" for everyone and "Stats overview" for staff', function () {
     \Illuminate\Support\Facades\Route::$routes = [];
     \Illuminate\Support\Facades\Event::$listeners = [];
     stats()->boot();
-    $item = null;
-    foreach (\Illuminate\Support\Facades\Event::$listeners as [$event, $listener]) {
-        if ($event === 'navigation.dashboard') {
-            $item = $listener();
-        }
-    }
-    same(['My stats', 'extensions.paywarr-stats', 'ri-bar-chart-2'], [$item['name'] ?? null, $item['route'] ?? null, $item['icon'] ?? null], 'menu item');
+    $items = fn () => array_map(fn ($l) => $l[1](), array_values(array_filter(\Illuminate\Support\Facades\Event::$listeners, fn ($l) => $l[0] === 'navigation.dashboard')));
+    \Illuminate\Support\Facades\Auth::$user = new FakeUser(false);
+    same([['My stats', 'extensions.paywarr-stats', 'ri-bar-chart-2', true], ['Stats overview', 'extensions.paywarr-stats.admin', 'ri-dashboard-3', false]],
+        array_map(fn ($i) => [$i['name'], $i['route'], $i['icon'], $i['condition']], $items()), 'a customer');
+    \Illuminate\Support\Facades\Auth::$user = new FakeUser(true);
+    same([true, true], array_column($items(), 'condition'), 'staff');
+    \Illuminate\Support\Facades\Auth::$user = null;
+
     $routes = \Illuminate\Support\Facades\Route::$routes;
-    same(['GET stats extensions.paywarr-stats', 'GET stats/poster/{number} extensions.paywarr-stats.poster'], array_map(fn ($r) => $r->method . ' ' . $r->uri . ' ' . $r->name, $routes), 'routes');
+    same([
+        'GET stats extensions.paywarr-stats', 'GET stats/poster/{number} extensions.paywarr-stats.poster',
+        'GET stats/admin extensions.paywarr-stats.admin', 'GET stats/admin/poster/{number} extensions.paywarr-stats.admin.poster',
+    ], array_map(fn ($r) => $r->method . ' ' . $r->uri . ' ' . $r->name, $routes), 'routes');
     same(['web', 'auth'], $routes[0]->middleware, 'logged-in customers only');
     same([['web', 'auth', 'throttle:120,1'], ['number' => '[0-9]+']], [$routes[1]->middleware, $routes[1]->wheres], 'posters: logged in, throttled, by number only');
+    same([['web', 'auth'], ['web', 'auth', 'throttle:240,1'], ['number' => '[0-9]+']], [$routes[2]->middleware, $routes[3]->middleware, $routes[3]->wheres], 'the overview: logged in; staff checked in the page');
 });
 
 test('stats: every text has a Danish translation', function () {

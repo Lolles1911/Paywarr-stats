@@ -62,6 +62,24 @@ class SiloClient
         return $plays;
     }
 
+    /** Every playback going on right now, all accounts (admin:monitor:read). */
+    public function sessions(): array
+    {
+        return $this->call('/api/v2/admin/sessions', ['limit' => 200])['items'] ?? [];
+    }
+
+    /** The most played titles and the most active profiles over the last $days days (1 to 30). */
+    public function topActivity(int $days, int $limit = 25): array
+    {
+        return $this->call('/api/v2/admin/stats/top-activity', ['days' => max(1, min(30, $days)), 'limit' => max(1, min(25, $limit))]);
+    }
+
+    /** Plays started per hour over the last $hours hours (up to 744), as buckets of hour and counts. */
+    public function playsPerHour(int $hours): array
+    {
+        return $this->call('/api/v2/admin/stats/playback-activity', ['hours' => max(1, min(744, $hours))])['buckets'] ?? [];
+    }
+
     /**
      * A catalog item (title, type, genres, poster, series_id, episode_count),
      * or null when it can't be read: a key without catalog access, a

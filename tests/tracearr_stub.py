@@ -25,6 +25,7 @@ from urllib.parse import parse_qs, urlparse
 
 def fresh_state() -> dict:
     return {"key": "trr_pub_test", "identities": [], "stats": {}, "history": {}, "watched": {}, "requests": [],
+            "streams": [], "top_media": {"movie": [], "show": []}, "activity": [],
             "silo": {"summary": {}, "history": {}, "items": {}, "ignore_user_filter": False,
                      "profiles": [{"id": "p-owner", "is_primary": True, "has_pin": False}, {"id": "p-kid", "is_primary": False, "has_pin": False}]}}
 
@@ -94,6 +95,12 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/silo/"):
             return self.silo(method, path[len("/silo"):], query)
 
+        if path == "/api/v1/public/activity":
+            STATE["requests"].append({"method": method, "path": "v1:/activity", "query": query})
+            if (self.headers.get("Authorization") or "") != "Bearer " + STATE["key"]:
+                return self.send_json(401, {"message": "Invalid API key"})
+            return self.send_json(200, {"period": query.get("period", "month"), "plays": STATE["activity"], "concurrent": [], "byDayOfWeek": [], "byHourOfDay": [], "platforms": [], "quality": {}})
+
         prefix = "/api/v2/public"
         if not path.startswith(prefix + "/"):
             return self.send_json(404, {"message": "Not found"})
@@ -113,6 +120,13 @@ class Handler(BaseHTTPRequestHandler):
             page = STATE["identities"][start:start + page_size]
             nxt = str(start + page_size) if start + page_size < len(STATE["identities"]) else None
             return self.send_json(200, {"data": page, "meta": {"nextCursor": nxt, "pageSize": page_size}})
+        if method == "GET" and path == "/streams":
+            return self.send_json(200, {"data": STATE["streams"], "summary": {"total": len(STATE["streams"])}})
+        if method == "GET" and path == "/top-media":
+            if query.get("media_type") not in ("movie", "show") or not 1 <= int(query.get("days", 30)) <= 365:
+                return self.send_json(400, {"message": "Invalid query parameters"})
+            rows = STATE["top_media"].get(query["media_type"], [])[:page_size]
+            return self.send_json(200, {"data": rows, "meta": {"nextCursor": None, "pageSize": page_size}})
         if method == "GET" and len(parts) == 3 and parts[0] == "users" and parts[2] == "stats":
             stats = STATE["stats"].get(parts[1], {})
             return self.send_json(200, {"user_id": parts[1], "windows": stats.get("windows", EMPTY_WINDOWS), "top_genres": stats.get("top_genres", [])})
@@ -160,6 +174,19 @@ class Handler(BaseHTTPRequestHandler):
             chunk = rows[start:start + limit]
             more = start + limit < len(rows)
             return self.send_json(200, {"items": chunk, "page": {"has_more": more, **({"next_cursor": str(start + limit)} if more else {})}})
+        if method == "GET" and path == "/api/v2/admin/sessions":
+            return self.send_json(200, {"items": silo.get("sessions", []), "page": {"has_more": False}})
+        if method == "GET" and path == "/api/v2/admin/stats/top-activity":
+            days, limit = int(query.get("days", 7)), int(query.get("limit", 10))
+            if not (1 <= days <= 30 and 1 <= limit <= 25):
+                return self.send_json(422, {"title": "validation_failed", "status": 422})
+            top = silo.get("top", {"titles": [], "profiles": []})
+            return self.send_json(200, {"days": days, "limit": limit, "titles": top["titles"][:limit], "profiles": top["profiles"][:limit]})
+        if method == "GET" and path == "/api/v2/admin/stats/playback-activity":
+            if not 1 <= int(query.get("hours", 24)) <= 744:
+                return self.send_json(422, {"title": "validation_failed", "status": 422})
+            return self.send_json(200, {"hours": int(query["hours"]), "bucket_seconds": 3600, "buckets": silo.get("buckets", []),
+                                        "from": "", "to": "", "profiles_active_24h": 0, "reliability": "ok"})
         if monitor_only:
             return self.send_json(403, {"title": "permission_denied", "status": 403})
         if method == "GET" and path == "/api/v2/profiles":

@@ -68,6 +68,27 @@ class TracearrClient
         return $this->call('/watched-media', ['media_type' => $type, 'user_id' => $id, 'min_state' => 'partial', 'pageSize' => 1000])['data'] ?? [];
     }
 
+    /** What is being streamed right now, on every server (GET /streams). */
+    public function streams(): array
+    {
+        return $this->call('/streams')['data'] ?? [];
+    }
+
+    /** The most played movies or shows over the last $days days, all users together. */
+    public function topMedia(string $type, int $days, int $count = 10): array
+    {
+        return $this->call('/top-media', ['media_type' => $type, 'days' => $days, 'sort' => 'plays', 'pageSize' => $count])['data'] ?? [];
+    }
+
+    /**
+     * Plays per day over the last 30 days, per server: rows of date and count.
+     * From the public API v1 (/api/v1/public/activity), which the same key opens.
+     */
+    public function playsPerDay(string $timezone): array
+    {
+        return $this->call('/activity', ['period' => 'month', 'timezone' => $timezone], '/api/v1/public')['plays'] ?? [];
+    }
+
     /**
      * A poster through Tracearr's image proxy (/api/v1/images/proxy, which
      * needs no key). Only that path is ever fetched, so this cannot be used
@@ -93,9 +114,9 @@ class TracearrClient
         return ['body' => $response->body(), 'type' => $type];
     }
 
-    private function call(string $path, array $query = []): array
+    private function call(string $path, array $query = [], string $base = '/api/v2/public'): array
     {
-        $url = rtrim($this->baseUrl, '/') . '/api/v2/public' . $path;
+        $url = rtrim($this->baseUrl, '/') . $base . $path;
         try {
             $response = Http::withHeaders(['Authorization' => 'Bearer ' . $this->apiKey, 'Accept' => 'application/json'])
                 ->timeout($this->timeout)

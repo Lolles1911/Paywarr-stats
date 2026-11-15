@@ -22,7 +22,7 @@ use Throwable;
 #[ExtensionMeta(
     name: 'Paywarr Stats',
     description: 'Shows each customer their own watch statistics from Tracearr or Silo, on a page in the client area.',
-    version: '1.4.0',
+    version: '1.5.0',
     author: 'Paywarr',
     url: 'https://github.com/Lolles1911/Paywarr-stats',
 )]
@@ -30,6 +30,9 @@ class PaywarrStats extends Extension
 {
     /** Numbers are kept this long per customer, so page views do not hit Tracearr. */
     private const CACHE_SECONDS = 600;
+
+    /** The administrators' overview is kept this long. */
+    private const ADMIN_CACHE_SECONDS = 60;
 
     /** "Nothing watched yet" and "no access yet" are kept this long. */
     private const EMPTY_CACHE_SECONDS = 60;
@@ -87,6 +90,113 @@ class PaywarrStats extends Extension
             'priority' => 25,
             'condition' => Auth::check(),
         ]);
+        Event::listen('navigation.dashboard', fn () => [
+            'name' => self::t('Stats overview'),
+            'route' => 'extensions.paywarr-stats.admin',
+            'icon' => 'ri-dashboard-3',
+            'priority' => 26,
+            'condition' => self::isAdmin(Auth::user()),
+        ]);
+    }
+
+    /** Paymenter staff who may see customers' subscriptions see the overview. */
+    public static function isAdmin($user): bool
+    {
+        return $user !== null && method_exists($user, 'hasPermission') && $user->hasPermission('admin.services.view');
+    }
+
+    /** GET /stats/admin: what all customers watch. Paymenter staff only. */
+    public function adminPage()
+    {
+        if (!self::isAdmin(Auth::user())) {
+            abort(404);
+        }
+        try {
+            $overview = $this->overview();
+        } catch (Throwable $e) {
+            Log::warning('Paywarr Stats: could not load the overview: ' . $e->getMessage());
+            $overview = null;
+        }
+
+        return view('layouts.app', [
+            'slot' => new HtmlString($this->adminHtml($overview, rtrim(route('extensions.paywarr-stats.admin'), '/') . '/poster/')),
+            'title' => self::t('Stats overview'),
+        ]);
+    }
+
+    /** GET /stats/admin/poster/{number} */
+    public function adminPoster($number)
+    {
+        if (!self::isAdmin(Auth::user())) {
+            abort(404);
+        }
+        try {
+            $image = $this->posterFor($this->overview(), (int) $number);
+        } catch (Throwable $e) {
+            $image = null;
+        }
+        if ($image === null) {
+            abort(404);
+        }
+
+        return response($image['body'], 200, [
+            'Content-Type' => $image['type'],
+            'Cache-Control' => 'private, max-age=3600',
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
+    }
+
+    /** The overview, kept for a minute: "now playing" should be close to now. */
+    public function overview(): array
+    {
+        $cached = Cache::get('paywarr-stats:admin:v1');
+        if (is_array($cached)) {
+            return $cached;
+        }
+        $overview = (new AdminOverview(
+            $this->configured('tracearr') ? $this->client() : null,
+            $this->configured('silo') ? $this->silo() : null,
+            (string) (config('app.timezone') ?: 'UTC'),
+        ))->gather($this->customerIndex());
+        Cache::put('paywarr-stats:admin:v1', $overview, self::ADMIN_CACHE_SECONDS);
+
+        return $overview;
+    }
+
+    /**
+     * Every media server user Paywarr noted, with the customer and subscription
+     * behind it: "silo|<account ID>", "<type>|<lower-case username>".
+     */
+    public function customerIndex(): array
+    {
+        $index = [];
+        $services = Service::with(['properties', 'product.server', 'user'])->whereIn('status', ['active', 'suspended'])->get();
+        foreach ($services as $service) {
+            if ($service->product?->server?->extension !== 'Wizarr') {
+                continue;
+            }
+            $user = $service->user;
+            $customer = [
+                'name' => trim(($user->first_name ?? '') . ' ' . ($user->last_name ?? '')) ?: (string) ($user->email ?? '?'),
+                'email' => (string) ($user->email ?? ''),
+                'products' => [(string) ($service->product->name ?? '')],
+                'status' => (string) $service->status,
+                'paid_until' => $service->expires_at ? date('Y-m-d', strtotime((string) $service->expires_at)) : null,
+            ];
+            foreach ($this->mediaAccounts([$service->properties->pluck('value', 'key')->all()]) as $account) {
+                $key = $account['type'] === 'silo' ? 'silo|' . $account['id'] : $account['type'] . '|' . strtolower($account['username']);
+                if (isset($index[$key])) {
+                    // Two subscriptions on one user: both products, the better status.
+                    $index[$key]['products'] = array_values(array_unique([...$index[$key]['products'], ...$customer['products']]));
+                    $index[$key]['status'] = in_array('active', [$index[$key]['status'], $customer['status']], true) ? 'active' : $customer['status'];
+                    $index[$key]['paid_until'] = max($index[$key]['paid_until'], $customer['paid_until']);
+                } else {
+                    $index[$key] = $customer;
+                }
+            }
+        }
+
+        return $index;
     }
 
     /** GET /stats */
@@ -721,10 +831,128 @@ class PaywarrStats extends Extension
         return $html . '</div>';
     }
 
+    /** The administrators' overview page body. */
+    public function adminHtml(?array $overview, string $posterBase = '/stats/admin/poster/'): string
+    {
+        $e = fn ($value) => htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
+        $html = '<div id="paywarr-stats" class="container mt-14"><style>' . $this->css() . $this->adminCss() . '</style>'
+            . '<header class="ps-head"><h1>' . $e(self::t('Stats overview')) . '</h1>'
+            . '<p class="ps-muted">' . $e(self::t('All customers, from Silo and Tracearr. Only Paymenter staff can see this page.')) . '</p></header>';
+        if ($overview === null) {
+            return $html . '<p class="ps-card ps-note">' . $e(self::t('The overview can\'t be loaded right now. The reason is in Paymenter\'s log.')) . '</p></div>';
+        }
+        foreach ($overview['errors'] as $error) {
+            $html .= '<p class="ps-card ps-note ps-warn">' . $e($error) . '</p>';
+        }
+        $poster = function (int $number, string $title, string $class) use ($e, $posterBase): string {
+            return '<span class="' . $class . '"><span class="ps-letter">' . $e(mb_strtoupper(mb_substr(trim($title) ?: '?', 0, 1))) . '</span>'
+                . ($number > 0 ? '<img loading="lazy" alt="" src="' . $e($posterBase . $number) . '" onerror="this.remove()">' : '') . '</span>';
+        };
+        $bar = fn (float $share) => '<span class="ps-bar"><span style="width:' . max(2, min(100, (int) round($share * 100))) . '%"></span></span>';
+        $customer = function (array $who) use ($e): string {
+            if (!empty($who['unknown'])) {
+                return '<div class="ps-title">' . $e($who['name']) . '</div><div class="ps-tiny"><span class="ps-badge ps-badge-warn">' . $e(self::t('No subscription')) . '</span></div>';
+            }
+            $status = $who['status'] === 'active' ? '<span class="ps-badge ps-badge-ok">' . $e(self::t('Active')) . '</span>' : '<span class="ps-badge ps-badge-warn">' . $e(self::t('Suspended')) . '</span>';
+
+            return '<div class="ps-title">' . $e($who['name']) . '</div><div class="ps-tiny">' . $status . ' ' . $e(implode(', ', array_filter($who['products'])))
+                . ($who['paid_until'] ? ' · ' . $e(self::t('until :date', ['date' => date(self::t('M j, Y'), strtotime($who['paid_until']))])) : '') . '</div>';
+        };
+
+        // Summary
+        $streams = $overview['streams'];
+        $converting = count(array_filter($streams, fn ($s) => $s['transcode']));
+        $plays = array_sum($overview['days']);
+        $watch = array_sum(array_column($overview['people'], 'watch_ms'));
+        $watching = count(array_filter($overview['people'], fn ($p) => empty($p['unknown'])));
+        $cards = [
+            [self::t('Streaming now'), (string) count($streams), $converting ? self::t(':count converting', ['count' => $converting]) : self::t('all played directly')],
+            [self::t('Plays'), number_format($plays, 0, self::t('.'), self::t(',')), self::t('Last 30 days')],
+            [self::t('Watch time'), $this->duration($watch), self::t('Last 30 days')],
+            [self::t('Customers watching'), $watching . ' / ' . $overview['paying'], self::t('of the active subscriptions, last 30 days')],
+        ];
+        $html .= '<div class="ps-periods ps-four">';
+        foreach ($cards as [$label, $value, $note]) {
+            $html .= '<div class="ps-card"><div class="ps-label">' . $e($label) . '</div><div class="ps-value">' . $e($value) . '</div><div class="ps-muted ps-small">' . $e($note) . '</div></div>';
+        }
+        $html .= '</div>';
+
+        // Now playing
+        $html .= '<h2 class="ps-h">' . $this->icon('now-playing') . $e(self::t('Streaming now')) . '</h2>';
+        if (!$streams) {
+            $html .= '<p class="ps-card ps-note ps-muted">' . $e(self::t('Nobody is watching right now.')) . '</p>';
+        } else {
+            $html .= '<div class="ps-shows">';
+            foreach ($streams as $stream) {
+                $method = $stream['transcode'] ? '<span class="ps-badge ps-badge-warn">' . $e(self::t('Converting')) . '</span>' : '<span class="ps-badge ps-badge-ok">' . $e(self::t('Direct')) . '</span>';
+                $html .= '<div class="ps-card ps-show">' . $poster($stream['poster'], $stream['title'], 'ps-thumb')
+                    . '<div class="ps-grow">' . $customer($stream['customer'])
+                    . '<div class="ps-small ps-clip ps-gap">' . ($stream['paused'] ? '<span class="ps-badge">' . $e(self::t('Paused')) . '</span> ' : '▶ ') . $e($stream['title']) . '</div>'
+                    . ($stream['sub'] !== '' ? '<div class="ps-muted ps-tiny ps-clip">' . $e($stream['sub']) . '</div>' : '')
+                    . '<div class="ps-muted ps-tiny ps-clip">' . $method . ' ' . $e(implode(' · ', array_filter([$stream['device'], $stream['server']]))) . '</div>'
+                    . ($stream['progress'] !== null ? $bar($stream['progress'] / 100) : '') . '</div></div>';
+            }
+            $html .= '</div>';
+        }
+
+        // Plays per day
+        $max = max(1, max($overview['days']));
+        $html .= '<h2 class="ps-h">' . $this->icon('when-you-watch') . $e(self::t('Plays per day')) . '</h2><div class="ps-card"><div class="ps-days">';
+        $i = 0;
+        foreach ($overview['days'] as $day => $count) {
+            $label = $i++ % 5 === 0 ? date(self::t('j/n'), strtotime($day)) : '';
+            $html .= '<div class="ps-col" title="' . $e(date(self::t('M j, Y'), strtotime($day)) . ': ' . $count) . '"><span class="ps-colbar"><span style="height:' . max(2, (int) round(100 * $count / $max)) . '%"></span></span><span class="ps-tiny">' . $e($label) . '</span></div>';
+        }
+        $html .= '</div></div>';
+
+        // Top titles
+        if ($overview['titles']) {
+            $html .= '<h2 class="ps-h">' . $this->icon('favourite-genres') . $e(self::t('Most watched, last 30 days')) . '</h2><div class="ps-posters">';
+            foreach ($overview['titles'] as $n => $title) {
+                $html .= '<div class="ps-tile">' . $poster($title['poster'], $title['title'], 'ps-cover') . '<span class="ps-rank">' . ($n + 1) . '</span>'
+                    . '<div class="ps-title ps-clip">' . $e($title['title']) . '</div>'
+                    . '<div class="ps-muted ps-small">' . $e($title['plays'] === 1 ? self::t('1 play') : self::t(':count plays', ['count' => $title['plays']])) . ' · ' . $e($this->duration($title['watch_ms'])) . '</div></div>';
+            }
+            $html .= '</div>';
+        }
+
+        // Most active customers
+        if ($overview['people']) {
+            $top = max(1, $overview['people'][0]['watch_ms']);
+            $html .= '<h2 class="ps-h">' . $this->icon('your-shows') . $e(self::t('Most active, last 30 days')) . '</h2><div class="ps-card ps-table">';
+            foreach (array_slice($overview['people'], 0, 25) as $person) {
+                $html .= '<div class="ps-row"><div class="ps-grow">' . $customer($person) . '</div>'
+                    . '<div class="ps-amount"><div class="ps-title">' . $e($this->duration($person['watch_ms'])) . '</div><div class="ps-tiny">'
+                    . $e(($person['plays'] === 1 ? self::t('1 play') : self::t(':count plays', ['count' => $person['plays']])) . ' · ' . implode(', ', array_keys($person['servers']))) . '</div>'
+                    . $bar($person['watch_ms'] / $top) . '</div></div>';
+            }
+            $html .= '</div>';
+        }
+
+        return $html . '<p class="ps-muted ps-tiny ps-foot">' . $e(self::t('Updated :time. Kept for a minute.', ['time' => date('H:i', $overview['at'])])) . '</p></div>';
+    }
+
+    private function adminCss(): string
+    {
+        return '#paywarr-stats .ps-four{grid-template-columns:repeat(auto-fit,minmax(min(100%,12rem),1fr))}'
+            . '#paywarr-stats .ps-warn{border-color:hsl(var(--color-primary));margin-bottom:1rem}'
+            . '#paywarr-stats .ps-badge{display:inline-block;padding:.05rem .45rem;border-radius:9999px;font-size:.7rem;font-weight:600;border:1px solid currentColor}'
+            . '#paywarr-stats .ps-badge-ok{color:hsl(142 60% 50%)}#paywarr-stats .ps-badge-warn{color:hsl(var(--color-primary))}'
+            . '#paywarr-stats .ps-gap{margin-top:.35rem}'
+            . '#paywarr-stats .ps-days{display:flex;align-items:flex-end;gap:.25rem;height:9rem}'
+            . '#paywarr-stats .ps-days .ps-col{min-width:0}'
+            . '#paywarr-stats .ps-rank{position:absolute;top:.4rem;left:.4rem;min-width:1.6rem;height:1.6rem;padding:0 .35rem;display:flex;align-items:center;justify-content:center;border-radius:9999px;font-weight:800;font-size:.8rem;background:hsl(var(--color-primary));color:hsl(var(--color-background))}'
+            . '#paywarr-stats .ps-table{padding:.4rem 1.3rem}'
+            . '#paywarr-stats .ps-row{display:flex;gap:1rem;align-items:center;padding:.8rem 0;border-bottom:1px solid hsl(var(--color-neutral))}'
+            . '#paywarr-stats .ps-row:last-child{border-bottom:0}'
+            . '#paywarr-stats .ps-amount{width:min(40%,14rem);text-align:right}#paywarr-stats .ps-amount .ps-bar{margin-top:.4rem}';
+    }
+
     /** A small line icon for a section heading, in the theme's text colour. */
     private function icon(string $name): string
     {
         $paths = [
+            'now-playing' => '<circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l6-3.5z"/>',
             'when-you-watch' => '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
             'favourite-genres' => '<path d="M3 12V4h8l10 10-8 8L3 12z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
             'where-you-watch' => '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
