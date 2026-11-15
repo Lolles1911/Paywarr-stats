@@ -90,6 +90,14 @@ class PaywarrStats extends Extension
             'priority' => 25,
             'condition' => Auth::check(),
         ]);
+        // "My stats" in the top bar too.
+        Event::listen('navigation', fn () => [
+            'name' => self::t('My stats'),
+            'url' => route('extensions.paywarr-stats'),
+            'icon' => 'ri-bar-chart-2',
+            'priority' => 11,
+            'condition' => Auth::check(),
+        ]);
         Event::listen('navigation.dashboard', fn () => [
             'name' => self::t('Stats overview'),
             'route' => 'extensions.paywarr-stats.admin',
