@@ -8,7 +8,7 @@ on:
     types: [published]
   push:
     branches: [main]
-    paths: [CHANGELOG.md]
+    paths: [CHANGELOG.md, .github/release-notes.sh]
   workflow_dispatch:
 
 permissions:
