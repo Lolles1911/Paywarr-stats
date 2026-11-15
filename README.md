@@ -62,7 +62,8 @@ You need Tracearr, Silo or both, depending on what your customers use.
    (internal)** (Silo's own port, e.g. `http://192.168.1.10:8090`) and **Silo
    API key**. Turn on **Enabled** and save.
 
-**My stats** then appears in the client area menu.
+**My stats** then appears in the client area menu and in the top bar, next to
+Home and Shop.
 
 ## Updating
 

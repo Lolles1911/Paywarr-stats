@@ -3,6 +3,12 @@
 What changed in each version of Paywarr Stats. Each section is also the text
 of its release on GitHub (`.github/release-notes.sh` puts it there).
 
+## 1.6.0 (2026-11-15)
+
+- **My stats in the top bar** too, next to Home and Shop (in the menu on a
+  phone). With Paywarr 1.21, Requests, Report a problem and Open Silo stand
+  there as well.
+
 ## 1.5.3 (2026-11-15)
 
 - **Fixed:** a poster could show the wrong title. Posters were addressed by
