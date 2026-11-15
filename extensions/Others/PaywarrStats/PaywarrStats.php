@@ -22,7 +22,7 @@ use Throwable;
 #[ExtensionMeta(
     name: 'Paywarr Stats',
     description: 'Shows each customer their own watch statistics from Tracearr or Silo, on a page in the client area.',
-    version: '1.5.2',
+    version: '1.5.3',
     author: 'Paywarr',
     url: 'https://github.com/Lolles1911/Paywarr-stats',
 )]
@@ -131,7 +131,7 @@ class PaywarrStats extends Extension
             abort(404);
         }
         try {
-            $image = $this->posterFor($this->overview(), (int) $number);
+            $image = $this->posterFor($this->overview(), (int) $number, (string) request()->query('v', ''));
         } catch (Throwable $e) {
             $image = null;
         }
@@ -220,7 +220,7 @@ class PaywarrStats extends Extension
     public function poster($number)
     {
         try {
-            $image = $this->posterFor($this->statsForUser(Auth::user()), (int) $number);
+            $image = $this->posterFor($this->statsForUser(Auth::user()), (int) $number, (string) request()->query('v', ''));
         } catch (Throwable $e) {
             $image = null;
         }
@@ -237,18 +237,45 @@ class PaywarrStats extends Extension
 
     /**
      * Poster number $number (from 1) of these statistics, fetched from
-     * Tracearr; null when there is none.
+     * Tracearr or Silo; null when there is none.
+     *
+     * $key is the poster's fingerprint from the page's address. Numbers
+     * change when the list does (a new play, a new minute of the overview),
+     * so the fingerprint decides: the browser keeps posters for a while, and
+     * a kept address must never show another title's poster.
      *
      * @return array{body: string, type: string}|null
      */
-    public function posterFor(array $stats, int $number): ?array
+    public function posterFor(array $stats, int $number, string $key = ''): ?array
     {
         $path = $stats['posters'][$number - 1] ?? null;
-        if ($number < 1 || !is_string($path) || $path === '') {
+        if ($key !== '') {
+            $path = null;
+            foreach ($stats['posters'] ?? [] as $candidate) {
+                if (self::posterKey((string) $candidate) === $key) {
+                    $path = $candidate;
+                }
+            }
+        } elseif ($number < 1) {
+            return null;
+        }
+        if (!is_string($path) || $path === '') {
             return null;
         }
 
         return str_starts_with($path, 'silo:') ? $this->silo()->poster(substr($path, 5)) : $this->client()->poster($path);
+    }
+
+    /** A poster's fingerprint, for its address: says which title, tells nothing about where it lives. */
+    public static function posterKey(string $path): string
+    {
+        return substr(hash('sha256', $path), 0, 12);
+    }
+
+    /** The address of poster $number of these statistics. */
+    private function posterSrc(string $base, array $stats, int $number): string
+    {
+        return $base . $number . '?v=' . self::posterKey((string) ($stats['posters'][$number - 1] ?? ''));
     }
 
     /** The customer's statistics, kept for CACHE_SECONDS. */
@@ -694,11 +721,11 @@ class PaywarrStats extends Extension
             return $html . '<p class="ps-card ps-note">' . $e($message) . '</p></div>';
         }
 
-        $poster = function (int $number, string $title, string $class, string $extra = '') use ($e, $posterBase): string {
+        $poster = function (int $number, string $title, string $class, string $extra = '') use ($e, $posterBase, $stats): string {
             $letter = $e(mb_strtoupper(mb_substr(trim($title) ?: '?', 0, 1)));
 
             return '<span class="' . $class . '"><span class="ps-letter">' . $letter . '</span>'
-                . ($number > 0 ? '<img loading="lazy" alt="" src="' . $e($posterBase . $number) . '" onerror="this.remove()">' : '') . $extra . '</span>';
+                . ($number > 0 ? '<img loading="lazy" alt="" src="' . $e($this->posterSrc($posterBase, $stats, $number)) . '" onerror="this.remove()">' : '') . $extra . '</span>';
         };
         $bar = fn (float $share) => '<span class="ps-bar"><span style="width:' . max(2, min(100, (int) round($share * 100))) . '%"></span></span>';
 
@@ -715,7 +742,7 @@ class PaywarrStats extends Extension
         }
         $last = $stats['recent'][0] ?? null;
         $html .= '<section class="ps-hero">'
-            . ($last && $last['poster'] > 0 ? '<img class="ps-hero-bg" alt="" src="' . $e($posterBase . $last['poster']) . '" onerror="this.remove()">' : '')
+            . ($last && $last['poster'] > 0 ? '<img class="ps-hero-bg" alt="" src="' . $e($this->posterSrc($posterBase, $stats, $last['poster'])) . '" onerror="this.remove()">' : '')
             . '<div class="ps-hero-main"><div class="ps-label">' . $e(($stats['all_time'] ?? 'all') === 'year' ? self::t('Last 12 months') : self::t('All time')) . '</div>'
             . '<div class="ps-big">' . $e($this->duration($all['watch_time_ms'])) . '</div>'
             . ($all['watch_time_ms'] >= 86400000 ? '<div class="ps-muted">' . $e(self::t('That is :count days of watching', ['count' => number_format($all['watch_time_ms'] / 86400000, 1, self::t('.'), '')])) . '</div>' : '')
@@ -844,9 +871,9 @@ class PaywarrStats extends Extension
         foreach ($overview['errors'] as $error) {
             $html .= '<p class="ps-card ps-note ps-warn">' . $e($error) . '</p>';
         }
-        $poster = function (int $number, string $title, string $class) use ($e, $posterBase): string {
+        $poster = function (int $number, string $title, string $class) use ($e, $posterBase, $overview): string {
             return '<span class="' . $class . '"><span class="ps-letter">' . $e(mb_strtoupper(mb_substr(trim($title) ?: '?', 0, 1))) . '</span>'
-                . ($number > 0 ? '<img loading="lazy" alt="" src="' . $e($posterBase . $number) . '" onerror="this.remove()">' : '') . '</span>';
+                . ($number > 0 ? '<img loading="lazy" alt="" src="' . $e($this->posterSrc($posterBase, $overview, $number)) . '" onerror="this.remove()">' : '') . '</span>';
         };
         $bar = fn (float $share) => '<span class="ps-bar"><span style="width:' . max(2, min(100, (int) round($share * 100))) . '%"></span></span>';
         $customer = function (array $who) use ($e): string {

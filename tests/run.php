@@ -243,7 +243,14 @@ test('stats: posters come through Paymenter, only from Tracearr\'s image proxy a
     same([null, null, null], [stats()->posterFor($stats, 0), stats()->posterFor($stats, -1), stats()->posterFor($stats, 99)], 'number 0, below, a number past the list');
 
     $html = stats()->pageHtml($stats, '/stats/poster/');
-    same(2, substr_count($html, 'src="/stats/poster/1"'), 'the show and its episode share the poster');
+    $src = 'src="/stats/poster/1?v=' . PaywarrStats::posterKey($stats['posters'][0]) . '"';
+    same(2, substr_count($html, $src), 'the show and its episode share the poster, with its fingerprint in the address');
+
+    // The list changes (new plays): an address the browser kept still gets its own title's poster, never another's.
+    $later = $stats;
+    $later['posters'] = ['/api/v1/images/proxy?url=other', $stats['posters'][0]];
+    ok(str_contains(stats()->posterFor($later, 1, PaywarrStats::posterKey($stats['posters'][0]))['body'] ?? '', '/Items/show/Images/Primary'), 'found by its fingerprint, not by number');
+    same(null, stats()->posterFor($later, 1, 'not-a-poster'), 'an unknown fingerprint: nothing, rather than the wrong poster');
     same(2, substr_count($html, '<img '), 'an <img> only where there is a poster');
     ok(!str_contains($html, 'evil.example.com') && !str_contains($html, 'images/proxy'), 'no outside or Tracearr address in the page');
 });
@@ -589,6 +596,7 @@ test('overview: only staff, the page escapes what it prints, and Danish', functi
     }
     ok(!str_contains($html, '<script>x') && !str_contains($html, '<b>evil'), 'escaped');
     ok(!str_contains($html, 'silo:') && !str_contains($html, 'images/proxy') && !str_contains($html, 'evil.example.com'), 'no addresses');
+    ok(preg_match('~src="/stats/admin/poster/\d+\?v=[0-9a-f]{12}"~', $html) === 1, 'posters by number, with their fingerprint');
     ok(str_contains(inLocale('da', fn () => overviewStats()->adminHtml(overviewStats()->overview())), 'Ser lige nu'), 'Danish');
 });
 
