@@ -9,6 +9,7 @@ require __DIR__ . '/../extensions/Others/PaywarrStats/TracearrException.php';
 require __DIR__ . '/../extensions/Others/PaywarrStats/TracearrClient.php';
 require __DIR__ . '/../extensions/Others/PaywarrStats/SiloClient.php';
 require __DIR__ . '/../extensions/Others/PaywarrStats/AdminOverview.php';
+require __DIR__ . '/../extensions/Others/PaywarrStats/BusinessOverview.php';
 require __DIR__ . '/../extensions/Others/PaywarrStats/PaywarrStats.php';
 
 use Paymenter\Extensions\Others\PaywarrStats\PaywarrStats;
@@ -493,6 +494,14 @@ class FakeUser
     }
 }
 
+/** One play in Tracearr's /history, $daysAgo days ago. */
+function historyPlay(string $server, string $type, string $user, string $title, ?string $show, int $ms, int $daysAgo, string $poster = ''): array
+{
+    return ['server_name' => $server, 'server_type' => $type, 'user' => ['username' => $user], 'media_title' => $title, 'show_title' => $show,
+        'media_type' => $show ? 'episode' : 'movie', 'duration_ms' => $ms, 'watched' => false, 'poster_url' => $poster,
+        'started_at' => gmdate('Y-m-d\TH:i:s\Z', time() - $daysAgo * 86400 - 3600)];
+}
+
 /** Mette on Silo (account 7, active), Ole on Jellyfin (suspended), and Silo account 9 that no subscription has. */
 function overviewFixture(): void
 {
@@ -530,14 +539,25 @@ function overviewFixture(): void
                     ['user_id' => '9', 'username' => 'stranger', 'profile_id' => 'c', 'profile_name' => 'S', 'plays' => 2, 'total_seconds' => 3600],
                     ['user_id' => '10', 'username' => 'idle', 'profile_id' => 'd', 'profile_name' => 'I', 'plays' => 0, 'total_seconds' => 0]],
             ],
+            'accounts' => [['id' => '7', 'username' => 'mette', 'role' => 'user'], ['id' => '9', 'username' => 'stranger', 'role' => 'user'], ['id' => '10', 'username' => 'idle', 'role' => 'user'], ['id' => '1', 'username' => 'owner', 'role' => 'admin']],
             'buckets' => [['hour' => $hour, 'direct' => 2, 'remux' => 0, 'transcode' => 1], ['hour' => gmdate('Y-m-d\TH:00:00.000\Z', time() - 40 * 86400), 'direct' => 50, 'remux' => 0, 'transcode' => 0]],
         ],
         'streams' => [['server_type' => 'jellyfin', 'server_name' => 'Wafflehub Jellyfin', 'username' => 'Ole', 'media_title' => 'Pilot', 'show_title' => 'The Show', 'season_number' => 1, 'episode_number' => 1,
             'duration_ms' => 3600000, 'progress_ms' => 1800000, 'state' => 'paused', 'is_transcode' => false, 'device' => 'iPhone', 'poster_url' => '/api/v1/images/proxy?url=show'],
             ['server_type' => 'emby', 'server_name' => 'Emby', 'username' => '<b>evil</b>', 'media_title' => '<script>x</script>', 'duration_ms' => 0, 'state' => 'playing', 'is_transcode' => true, 'poster_url' => 'http://evil.example.com/x']],
-        'top_media' => ['movie' => [['media_id' => 'm', 'title' => 'Arrival Point', 'year' => null, 'plays' => 2, 'watch_time_ms' => 3600000]], 'show' => [['media_id' => 's', 'title' => 'The Show', 'plays' => 6, 'watch_time_ms' => 9000000]]],
-        'activity' => [['date' => date('Y-m-d') . ' 00:00:00', 'serverId' => 'a', 'count' => 4], ['date' => '1999-01-01 00:00:00', 'serverId' => 'a', 'count' => 99]],
-        'media_history' => ['s' => [['media_title' => 'Pilot', 'poster_url' => '/api/v1/images/proxy?url=theshow']], 'm' => [['poster_url' => 'http://evil.example.com/p']]],
+        'servers' => [
+            ['server_id' => 'srv-jellyfin', 'server_name' => 'Wafflehub Jellyfin', 'server_type' => 'jellyfin', 'status' => 'up', 'historical' => false, 'active_streams' => 1],
+            ['server_id' => 'srv-emby', 'server_name' => 'Emby', 'server_type' => 'emby', 'status' => 'down', 'historical' => false, 'active_streams' => 1],
+            ['server_id' => 'srv-plex', 'server_name' => 'Old Plex', 'server_type' => 'plex', 'status' => 'unknown', 'historical' => true, 'active_streams' => 0],
+        ],
+        'all_history' => [
+            ...array_fill(0, 6, historyPlay('Wafflehub Jellyfin', 'jellyfin', 'ole', 'Pilot', 'The Show', 1500000, 2, '/api/v1/images/proxy?url=theshow')),
+            historyPlay('Wafflehub Jellyfin', 'jellyfin', 'ole', 'Short Clip', null, 60000, 1),
+            historyPlay('Wafflehub Jellyfin', 'jellyfin', 'two', 'Arrival Point', null, 1800000, 3, 'http://evil.example.com/p'),
+            historyPlay('Wafflehub Jellyfin', 'jellyfin', 'two', 'Arrival Point', null, 1800000, 4),
+            historyPlay('Old Plex', 'plex', 'grandma', 'Old Movie', null, 6000000, 5),
+            historyPlay('Old Plex', 'plex', 'grandma', 'Ancient', null, 9000000, 45),
+        ],
     ]);
 }
 
@@ -561,29 +581,47 @@ test('overview: who streams right now, as the customers behind the users', funct
     ok(!in_array('http://evil.example.com/x', $overview['posters'], true), 'never an outside address');
 });
 
-test('overview: most watched titles, both sources together, and plays per day', function () {
+test('overview: most watched titles, both sources together, with who watched them where, and plays per day per server', function () {
     overviewFixture();
     $overview = overviewStats()->overview();
-    same([['The Show', 6], ['Arrival Point', 7], ['Glass Harbor', 3]], array_map(fn ($t) => [$t['title'], $t['plays']], [$overview['titles'][1], $overview['titles'][0], $overview['titles'][2]]), 'merged by title');
-    same('Arrival Point', $overview['titles'][0]['title'], 'most plays first');
+    same([['Arrival Point', 7, ['Two Test'], ['Silo', 'Wafflehub Jellyfin']], ['The Show', 6, ['Ole Test'], ['Wafflehub Jellyfin']], ['Glass Harbor', 3, [], ['Silo']], ['Old Movie', 1, ['grandma'], ['Old Plex']]],
+        array_map(fn ($t) => [$t['title'], $t['plays'], $t['viewers'], $t['servers']], $overview['titles']), 'merged by title, most plays first; viewers as customers, or their username');
     ok($overview['titles'][0]['poster'] > 0, 'Silo\'s poster for a title Tracearr also has');
     same('/api/v1/images/proxy?url=theshow', $overview['posters'][$overview['titles'][1]['poster'] - 1] ?? null, 'Tracearr\'s titles get the poster of their latest play');
     ok(!in_array('http://evil.example.com/p', $overview['posters'], true), 'only from Tracearr\'s image proxy');
-    same(3 + 4, array_sum($overview['days']), 'Silo\'s hourly buckets and Tracearr\'s days, last 30 days only');
+    $perServer = array_reduce($overview['days'], function ($sum, $day) { foreach ($day as $k => $n) { $sum[$k] = ($sum[$k] ?? 0) + $n; } return $sum; }, []);
+    ksort($perServer);
+    same(['Old Plex' => 1, 'Silo' => 3, 'Wafflehub Jellyfin' => 8], $perServer,
+        'per server: Silo\'s hourly buckets, Tracearr\'s plays of 2 minutes or more, last 30 days only');
     same(30, count($overview['days']), '30 days');
-    $v1 = array_values(array_filter(state()['requests'], fn ($r) => $r['path'] === 'v1:/activity'));
-    same('month', $v1[0]['query']['period'] ?? null, 'Tracearr\'s month of activity');
+    $history = array_values(array_filter(state()['requests'], fn ($r) => $r['path'] === '/history'));
+    ok(isset($history[0]['query']['since']) && abs(strtotime($history[0]['query']['since']) - (time() - 30 * 86400)) < 120, 'Tracearr\'s history since 30 days ago');
+    same([], array_values(array_filter(state()['requests'], fn ($r) => in_array($r['path'], ['/top-media', 'v1:/activity'], true) || str_ends_with($r['path'], '/stats'))), 'one history instead of top lists, activity and a call per user');
 });
 
-test('overview: most active customers, with their subscription; users without one are flagged', function () {
+test('overview: media servers, with users, customers, streams, plays and status', function () {
     overviewFixture();
-    $people = overviewStats()->overview()['people'];
-    same([['Ole Test', 99, 99 * 3600000], ['Mette Test', 5, 7800000], ['Two Test', 2, 2 * 3600000], ['stranger', 2, 3600000]], array_map(fn ($p) => [$p['name'], $p['plays'], $p['watch_ms']], $people),
-        'by watch time; two Silo profiles are one customer; one Tracearr identity with two noted accounts counts once; nobody without plays');
-    same([true], [$people[3]['unknown']], 'no subscription');
-    same(3, overviewStats()->overview()['paying'], 'customers with an active subscription (Mette, Other, Two)');
-    $asked = array_values(array_unique(array_column(array_filter(state()['requests'], fn ($r) => str_starts_with($r['path'], '/users/') && str_ends_with($r['path'], '/stats')), 'path')));
-    same(['/users/u-ole/stats', '/users/u-two/stats'], $asked, 'Tracearr is only asked about users Paywarr noted for a customer, once each');
+    $servers = array_column(overviewStats()->overview()['servers'], null, 'name');
+    same(['Wafflehub Jellyfin', 'Silo', 'Emby', 'Old Plex'], array_keys($servers), 'live servers by plays, history-only last');
+    same([3, 2, 1, 8, 'up'], [$servers['Wafflehub Jellyfin']['users'], $servers['Wafflehub Jellyfin']['customers'], $servers['Wafflehub Jellyfin']['streams'], $servers['Wafflehub Jellyfin']['plays'], $servers['Wafflehub Jellyfin']['status']], 'Jellyfin');
+    same([3, 1, 2, 3, 11400000], [$servers['Silo']['users'], $servers['Silo']['customers'], $servers['Silo']['streams'], $servers['Silo']['plays'], $servers['Silo']['watch_ms']], 'Silo: accounts without the admin');
+    same([true, 1], [$servers['Old Plex']['historical'], $servers['Old Plex']['plays']], 'imported history');
+    same('down', $servers['Emby']['status'], 'Emby down');
+    \Illuminate\Support\Facades\Cache::$store = [];
+    $monitor = overviewStats(['silo_api_key' => 'sa_monitor'])->overview();
+    same([null, []], [array_column($monitor['servers'], null, 'name')['Silo']['users'], $monitor['errors']], 'a monitoring key can\'t list accounts: no count, no error');
+});
+
+test('overview: most active, everyone on the servers; users without a subscription are flagged', function () {
+    overviewFixture();
+    $overview = overviewStats()->overview();
+    $people = $overview['people'];
+    same([['Ole Test', 6, 9060000, false], ['Mette Test', 5, 7800000, false], ['grandma', 1, 6000000, true], ['stranger', 2, 3600000, true], ['Two Test', 2, 3600000, false]],
+        array_map(fn ($p) => [$p['name'], $p['plays'], $p['watch_ms'], !empty($p['unknown'])], $people),
+        'by watch time; two Silo profiles are one customer; a short play adds minutes, not a play; nobody without plays or minutes');
+    same(3, $overview['paying'], 'customers with an active subscription (Mette, Other, Two)');
+    $html = overviewStats()->adminHtml($overview);
+    same('8 h 21 min', preg_match('~Watch time</div><div class="ps-value">([^<]+)~', $html, $m) ? $m[1] : '?', 'Watch time counts everyone');
 });
 
 test('overview: only staff, the page escapes what it prints, and Danish', function () {
@@ -614,7 +652,7 @@ test('overview: one source down still shows the other, with the reason', functio
 test('overview: kept for a minute', function () {
     overviewFixture();
     overviewStats()->overview();
-    same(60, \Illuminate\Support\Facades\Cache::$ttl['paywarr-stats:admin:v1'], 'a minute');
+    same(60, \Illuminate\Support\Facades\Cache::$ttl['paywarr-stats:admin:v2'], 'a minute');
     stub('/_test/clear-requests');
     overviewStats()->overview();
     same([], state()['requests'], 'asked nothing the second time');
@@ -649,6 +687,90 @@ test('stats: every text has a Danish translation', function () {
     $danish = json_decode(file_get_contents(__DIR__ . '/../extensions/Others/PaywarrStats/lang/da.json'), true);
     same([], array_values(array_diff($used, array_keys($danish))), 'missing in da.json');
     same([], array_values(array_diff(array_keys($danish), $used)), 'not used');
+});
+
+/* ---------- business ---------- */
+
+/** A Paywarr subscription as BusinessOverview reads it. */
+function sub(array $overrides = []): array
+{
+    return $overrides + ['id' => 1, 'status' => 'active', 'server' => 'Silo', 'product' => 'Silo Standard', 'price' => 50.0, 'quantity' => 1, 'currency' => 'DKK',
+        'plan_type' => 'recurring', 'period' => 1, 'unit' => 'month', 'created_at' => time() - 90 * 86400, 'cancelled_at' => null, 'expires_at' => time() + 20 * 86400,
+        'trial' => false, 'trial_ended' => false, 'trial_converted' => false, 'name' => 'Mette', 'email' => 'mette@example.com', 'discord' => true,
+        'discord_left' => null, 'discord_suspended' => false];
+}
+
+function business(array $services, array $invoices = [], array $watching = [], ?array $requests = null): array
+{
+    return (new \Paymenter\Extensions\Others\PaywarrStats\BusinessOverview)->gather($services, $invoices, $watching, $requests);
+}
+
+test('business: subscriptions and customers per server, trials kept apart', function () {
+    $b = business([
+        sub(), sub(['email' => 'ole@example.com', 'status' => 'suspended']), sub(['server' => 'Jellyfin', 'email' => 'two@example.com']),
+        sub(['server' => 'Jellyfin', 'email' => 'two@example.com', 'product' => 'Extra']), sub(['status' => 'cancelled', 'email' => 'x@example.com']), sub(['status' => 'pending', 'email' => 'p@example.com']),
+        sub(['trial' => true, 'email' => 't@example.com', 'price' => 0, 'plan_type' => 'free']),
+    ]);
+    same([['Jellyfin', 2, 0, 0, 0, 0, 1], ['Silo', 1, 1, 1, 1, 1, 2]], array_map(fn ($r) => [$r['name'], $r['active'], $r['trials'], $r['suspended'], $r['pending'], $r['cancelled'], $r['customers']], $b['servers']),
+        'by server; one customer with two subscriptions counts once; a running trial is a trial, and its customer counts');
+    same(2, $b['paying'], 'paying customers: Mette and Two');
+});
+
+test('business: trials running, ended and bought, with the share that became paying', function () {
+    $b = business([sub(['trial' => true]), sub(['trial' => true, 'trial_ended' => true, 'status' => 'cancelled']), sub(['trial' => true, 'trial_ended' => true, 'status' => 'cancelled']),
+        sub(['trial' => true, 'trial_converted' => true, 'status' => 'cancelled']), sub(['trial' => true, 'trial_converted' => true, 'trial_ended' => true, 'status' => 'cancelled'])]);
+    same(['running' => 1, 'ended' => 2, 'converted' => 2, 'rate' => 50], $b['trials'], '2 of 4 finished trials bought');
+    same(null, business([sub(['trial' => true])])['trials']['rate'], 'no rate before a trial has ended');
+});
+
+test('business: monthly revenue per currency and product, from the billing period', function () {
+    $b = business([sub(['price' => 600, 'unit' => 'year', 'product' => 'Yearly']), sub(['price' => 99, 'quantity' => 2, 'product' => 'Family']), sub(['price' => 10, 'unit' => 'week', 'product' => 'Weekly']),
+        sub(['price' => 300, 'period' => 3, 'product' => 'Quarter']), sub(['price' => 0, 'plan_type' => 'free', 'product' => 'Free']), sub(['price' => 500, 'plan_type' => 'one-time', 'product' => 'Once']),
+        sub(['price' => 20, 'currency' => 'EUR', 'product' => 'Euro']), sub(['price' => 999, 'status' => 'suspended', 'product' => 'Suspended']), sub(['price' => 50, 'trial' => true, 'product' => 'Trial'])]);
+    same(['DKK' => 50 + 198 + 100 + round(10 * 30 / 7, 6), 'EUR' => 20.0], array_map(fn ($v) => round($v, 6), $b['revenue']), 'yearly / 12, x2 quantity, quarterly / 3, weekly x 30/7; free, one-time, suspended and trials left out');
+    same(['Family', 'Quarter', 'Yearly', 'Weekly', 'Euro'], array_column($b['products'], 'product'), 'products by revenue');
+});
+
+test('business: unpaid invoices, growth and renewals in the next 7 days', function () {
+    $now = time();
+    $b = business([
+        sub(['created_at' => $now - 5 * 86400]), sub(['created_at' => $now - 40 * 86400, 'expires_at' => $now + 3 * 86400, 'name' => 'Soon']),
+        sub(['trial' => true, 'created_at' => $now - 2 * 86400]), sub(['status' => 'cancelled', 'cancelled_at' => $now - 86400]), sub(['status' => 'cancelled', 'cancelled_at' => $now - 60 * 86400]),
+        sub(['expires_at' => $now + 2 * 86400, 'plan_type' => 'one-time', 'name' => 'Once']),
+    ], [['status' => 'pending', 'total' => 99.0, 'currency' => 'DKK', 'due_at' => $now - 86400], ['status' => 'pending', 'total' => 50.0, 'currency' => 'DKK', 'due_at' => $now + 86400],
+        ['status' => 'paid', 'total' => 10.0, 'currency' => 'DKK', 'due_at' => null]]);
+    same(['count' => 2, 'overdue' => 1, 'amounts' => ['DKK' => 149.0]], $b['unpaid'], 'unpaid, one overdue');
+    same(['new' => 1, 'new_trials' => 1, 'cancelled' => 1], $b['growth'], 'last 30 days');
+    same(['Soon'], array_column($b['renewals'], 'name'), 'renews within 7 days; a one-time plan does not renew');
+});
+
+test('business: paying customers who watch nothing, Discord and requests', function () {
+    $now = time();
+    $b = business([sub(), sub(['email' => 'ole@example.com', 'name' => 'Ole', 'discord' => false]), sub(['email' => 'two@example.com', 'name' => 'Two', 'discord_left' => $now - 3600]),
+        sub(['email' => 'gone@example.com', 'status' => 'suspended', 'discord_suspended' => true])],
+        [], ['METTE@example.com'], [['name' => 'Mette', 'email' => 'mette@example.com', 'label' => 'Silo', 'used' => 10, 'limit' => 10, 'unlimited' => false],
+            ['name' => 'Two', 'email' => 'two@example.com', 'label' => 'Seerr', 'used' => 3, 'limit' => 0, 'unlimited' => true]]);
+    same(['Ole', 'Two'], array_column($b['idle'], 'name'), 'paying, no play in 30 days (e-mail case ignored)');
+    same([2, ['Two'], 1], [$b['discord']['connected'], array_column($b['discord']['warned'], 'name'), $b['discord']['suspended']], 'Discord');
+    same([13, 2, ['Mette']], [$b['requests']['used'], $b['requests']['customers'], array_column($b['requests']['full'], 'name')], 'requests; unlimited is never full');
+    same(null, business([sub()])['requests'], 'unknown without Paywarr 1.23');
+});
+
+test('business: the page shows it, in Danish too, and rows are read from Paymenter\'s subscriptions', function () {
+    overviewFixture();
+    $stats = overviewStats();
+    $overview = $stats->overview();
+    ok(is_array($overview['business']), 'read from the fixture\'s subscriptions');
+    same(3, $overview['business']['paying'], 'three paying customers');
+    $overview['business'] = business([sub(['expires_at' => time() + 86400]), sub(['email' => 'ole@example.com', 'name' => 'Ole', 'discord_left' => time()])], [], [], []);
+    $html = $stats->adminHtml($overview);
+    foreach (['Monthly revenue', '100.00 DKK', 'Subscriptions per server', 'Media servers', 'History only', 'Renewing soon', 'Revenue per product', 'Not watching', 'Left the Discord', 'Requests used', 'By Ole Test', 'ps-legend'] as $needle) {
+        ok(str_contains($html, $needle), "shows \"$needle\"");
+    }
+    $da = inLocale('da', fn () => $stats->adminHtml($overview));
+    ok(str_contains($da, 'Månedlig indtægt') && str_contains($da, '100,00 DKK'), 'Danish, with a decimal comma');
+    $overview['business'] = null;
+    ok(!str_contains($stats->adminHtml($overview), 'Monthly revenue'), 'without it, the rest still shows');
 });
 
 /* ---------- summary ---------- */

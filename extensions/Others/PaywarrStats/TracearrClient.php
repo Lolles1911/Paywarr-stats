@@ -37,6 +37,36 @@ class TracearrClient
         return $users;
     }
 
+    /**
+     * The media servers Tracearr watches: server_id, server_name, server_type,
+     * status ("up", "down", "unknown"), historical (only imported history,
+     * no live connection) and active_streams.
+     */
+    public function servers(): array
+    {
+        return $this->call('/servers')['data'] ?? [];
+    }
+
+    /**
+     * Every play since $since on every server, newest first: up to $max, in
+     * pages of 100. Each has server_name, user.username, media_title,
+     * show_title, duration_ms (watched), watched, started_at and poster_url.
+     */
+    public function history(int $since, int $max = 3000): array
+    {
+        $plays = [];
+        $cursor = null;
+        do {
+            $page = $this->call('/history', array_filter(['pageSize' => 100, 'since' => gmdate('Y-m-d\TH:i:s\Z', $since), 'cursor' => $cursor]));
+            foreach ($page['data'] ?? [] as $play) {
+                $plays[] = $play;
+            }
+            $cursor = $page['meta']['nextCursor'] ?? null;
+        } while ($cursor !== null && count($plays) < $max);
+
+        return $plays;
+    }
+
     /** Plays and watch time (last 7 days, last 30 days, all time) and top genres. */
     public function userStats(string $id): array
     {

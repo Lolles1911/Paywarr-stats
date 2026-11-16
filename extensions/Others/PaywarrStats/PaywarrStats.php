@@ -157,7 +157,7 @@ class PaywarrStats extends Extension
     /** The overview, kept for a minute: "now playing" should be close to now. */
     public function overview(): array
     {
-        $cached = Cache::get('paywarr-stats:admin:v1');
+        $cached = Cache::get('paywarr-stats:admin:v2');
         if (is_array($cached)) {
             return $cached;
         }
@@ -166,9 +166,163 @@ class PaywarrStats extends Extension
             $this->configured('silo') ? $this->silo() : null,
             (string) (config('app.timezone') ?: 'UTC'),
         ))->gather($this->customerIndex());
-        Cache::put('paywarr-stats:admin:v1', $overview, self::ADMIN_CACHE_SECONDS);
+        $overview['business'] = $this->business($overview);
+        Cache::put('paywarr-stats:admin:v2', $overview, self::ADMIN_CACHE_SECONDS);
 
         return $overview;
+    }
+
+    /** Paymenter's side of the overview; null (and a line in the log) when it can't be read. */
+    public function business(array $overview): ?array
+    {
+        try {
+            $services = Service::with(['product.server', 'product.settings', 'plan', 'properties', 'user.properties', 'cancellation'])->get();
+            $watching = [];
+            foreach ($overview['people'] as $person) {
+                if (($person['email'] ?? '') !== '' && $person['plays'] > 0) {
+                    $watching[] = $person['email'];
+                }
+            }
+            // Asking Silo and Seerr about every customer takes a moment: kept for 10 minutes.
+            $requests = Cache::get('paywarr-stats:admin:requests');
+            if (!is_array($requests) && $requests !== false) {
+                $requests = $this->requestRows($services) ?? false;
+                Cache::put('paywarr-stats:admin:requests', $requests, 600);
+            }
+
+            return (new BusinessOverview)->gather($this->businessRows($services), $this->invoiceRows(), $watching, $requests === false ? null : $requests);
+        } catch (Throwable $e) {
+            Log::warning('Paywarr Stats: the business part of the overview could not be read: ' . $e->getMessage());
+
+            return null;
+        }
+    }
+
+    /** Paywarr's subscriptions as BusinessOverview's rows. */
+    public function businessRows(iterable $services): array
+    {
+        $rows = [];
+        foreach ($services as $service) {
+            $product = $service->product ?? null;
+            if (($product?->server?->extension ?? null) !== 'Wizarr') {
+                continue;
+            }
+            $settings = $this->settingsArray($product->settings ?? []);
+            $props = $this->propertiesOf($service);
+            $user = $service->user ?? null;
+            $userProps = $user ? $this->propertiesOf($user) : [];
+            $time = fn ($value) => $value ? (strtotime((string) $value) ?: null) : null;
+            $rows[] = [
+                'id' => $service->id ?? null,
+                'status' => (string) ($service->status ?? ''),
+                'server' => (string) ($product->server->name ?? ''),
+                'product' => (string) ($product->name ?? ''),
+                'price' => (float) ($service->price ?? 0),
+                'quantity' => (int) ($service->quantity ?? 1),
+                'currency' => (string) ($service->currency_code ?? ''),
+                'plan_type' => (string) ($service->plan->type ?? ''),
+                'period' => (int) ($service->plan->billing_period ?? 1),
+                'unit' => (string) ($service->plan->billing_unit ?? 'month'),
+                'created_at' => $time($service->created_at ?? null),
+                'cancelled_at' => $time($service->cancellation->created_at ?? null) ?? $time($service->updated_at ?? null),
+                'expires_at' => $time($service->expires_at ?? null),
+                'trial' => (int) ($settings['trial_days'] ?? 0) > 0,
+                'trial_ended' => !empty($props['trial_ended_at']),
+                'trial_converted' => !empty($props['trial_converted_to']),
+                'name' => trim(($user->first_name ?? '') . ' ' . ($user->last_name ?? '')) ?: (string) ($user->email ?? '?'),
+                'email' => (string) ($user->email ?? ''),
+                'discord' => !empty($userProps['discord_id']),
+                'discord_left' => ($left = (int) ($props['discord_left_at'] ?? 0)) > 0 ? $left : null,
+                'discord_suspended' => !empty($props['discord_suspended']),
+            ];
+        }
+
+        return $rows;
+    }
+
+    /** Unpaid invoices: status, total, currency, due_at. */
+    private function invoiceRows(): array
+    {
+        if (!class_exists(\App\Models\Invoice::class)) {
+            return [];
+        }
+        $rows = [];
+        foreach (\App\Models\Invoice::with(['items', 'adjustmentNotes'])->where('status', 'pending')->get() as $invoice) {
+            $rows[] = ['status' => 'pending', 'total' => (float) $invoice->total, 'currency' => (string) ($invoice->currency_code ?? ''),
+                'due_at' => $invoice->due_at ? strtotime((string) $invoice->due_at) : null];
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Each active customer's request quota, through Paywarr (1.23 or newer);
+     * null when Paywarr can't tell.
+     */
+    private function requestRows(iterable $services): ?array
+    {
+        $paywarr = 'Paymenter\\Extensions\\Servers\\Wizarr\\Wizarr';
+        if (!class_exists($paywarr) || !method_exists($paywarr, 'requestQuotaOf')) {
+            return null;
+        }
+        $wizarr = new $paywarr([]);
+        $byUser = [];
+        foreach ($services as $service) {
+            if (($service->status ?? '') === 'active' && ($service->product?->server?->extension ?? null) === 'Wizarr' && $service->user) {
+                $byUser[$service->user_id ?? $service->user->id][] = $service;
+            }
+        }
+        $rows = [];
+        foreach ($byUser as $list) {
+            $user = $list[0]->user;
+            try {
+                $sources = $wizarr->requestsSources($user, $list);
+            } catch (Throwable $e) {
+                continue;
+            }
+            foreach ($sources as $source) {
+                try {
+                    $quota = $wizarr->requestQuotaOf($source);
+                } catch (Throwable $e) {
+                    continue;
+                }
+                if ($quota === null) {
+                    continue;
+                }
+                $rows[] = [
+                    'name' => trim(($user->first_name ?? '') . ' ' . ($user->last_name ?? '')) ?: (string) ($user->email ?? '?'),
+                    'email' => (string) ($user->email ?? ''),
+                    'label' => (string) ($source['label'] ?? ''),
+                    'used' => array_sum(array_column($quota['parts'] ?? [], 'used')),
+                    'limit' => array_sum(array_column($quota['parts'] ?? [], 'limit')),
+                    'unlimited' => !empty($quota['unlimited']),
+                ];
+            }
+        }
+
+        return $rows;
+    }
+
+    /** key => value of a model's properties (loaded relation or query). */
+    private function propertiesOf($model): array
+    {
+        $properties = $model->properties ?? null;
+        if (is_object($properties) && method_exists($properties, 'pluck')) {
+            $values = $properties->pluck('value', 'key');
+
+            return is_array($values) ? $values : (method_exists($values, 'all') ? $values->all() : []);
+        }
+
+        return is_array($properties) ? $properties : [];
+    }
+
+    private function settingsArray($settings): array
+    {
+        if (class_exists(\App\Helpers\ExtensionHelper::class) && method_exists(\App\Helpers\ExtensionHelper::class, 'settingsToArray')) {
+            return \App\Helpers\ExtensionHelper::settingsToArray($settings);
+        }
+
+        return is_array($settings) ? $settings : [];
     }
 
     /**
@@ -872,7 +1026,7 @@ class PaywarrStats extends Extension
         $e = fn ($value) => htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
         $html = '<div id="paywarr-stats" class="container mt-14"><style>' . $this->css() . $this->adminCss() . '</style>'
             . '<header class="ps-head"><h1>' . $e(self::t('Stats overview')) . '</h1>'
-            . '<p class="ps-muted">' . $e(self::t('All customers, from Silo and Tracearr. Only Paymenter staff can see this page.')) . '</p></header>';
+            . '<p class="ps-muted">' . $e(self::t('Everyone on your servers, from Silo and Tracearr, and your subscriptions in Paymenter. Only Paymenter staff can see this page.')) . '</p></header>';
         if ($overview === null) {
             return $html . '<p class="ps-card ps-note">' . $e(self::t('The overview can\'t be loaded right now. The reason is in Paymenter\'s log.')) . '</p></div>';
         }
@@ -894,29 +1048,136 @@ class PaywarrStats extends Extension
                 . ($who['paid_until'] ? ' · ' . $e(self::t('until :date', ['date' => date(self::t('M j, Y'), strtotime($who['paid_until']))])) : '') . '</div>';
         };
 
-        // Summary
+        $business = $overview['business'] ?? null;
+        $servers = $overview['servers'] ?? [];
+        $section = fn (string $icon, string $title) => '<h2 class="ps-h">' . $this->icon($icon) . $e($title) . '</h2>';
+        $cardsRow = function (array $cards) use ($e): string {
+            $html = '<div class="ps-periods ps-four">';
+            foreach ($cards as [$label, $value, $note]) {
+                $html .= '<div class="ps-card"><div class="ps-label">' . $e($label) . '</div><div class="ps-value">' . $e($value) . '</div><div class="ps-muted ps-small">' . $e($note) . '</div></div>';
+            }
+
+            return $html . '</div>';
+        };
+        // One colour per server, the same in every chart and list.
+        $palette = ['hsl(var(--color-primary))', 'hsl(190 80% 55%)', 'hsl(40 95% 60%)', 'hsl(145 60% 50%)', 'hsl(330 75% 65%)', 'hsl(260 60% 70%)'];
+        $colours = [];
+        foreach ($servers as $i => $server) {
+            $colours[$server['name']] = $palette[$i % count($palette)];
+        }
+        $colour = fn (string $name) => $colours[$name] ?? 'hsl(var(--color-base) / .5)';
+
+        // Business
+        if ($business !== null) {
+            $revenue = $business['revenue'] ? implode(' + ', array_map(fn ($amount, $currency) => $this->money($amount, $currency), $business['revenue'], array_keys($business['revenue']))) : $this->money(0, '');
+            $unpaid = $business['unpaid'];
+            $trials = $business['trials'];
+            $html .= $cardsRow([
+                [self::t('Monthly revenue'), $revenue, self::t('Active paid subscriptions, per month')],
+                [self::t('Paying customers'), (string) $business['paying'], ($business['growth']['new'] === 1 ? self::t('1 new subscription in 30 days') : self::t(':count new subscriptions in 30 days', ['count' => $business['growth']['new']]))],
+                [self::t('Trials running'), (string) $trials['running'], $trials['rate'] === null ? self::t('No trial has ended yet') : self::t(':rate% became paying (:converted of :total)', ['rate' => $trials['rate'], 'converted' => $trials['converted'], 'total' => $trials['converted'] + $trials['ended']])],
+                [self::t('Unpaid invoices'), (string) $unpaid['count'], $unpaid['count'] === 0 ? self::t('All paid') : implode(' + ', array_map(fn ($amount, $currency) => $this->money($amount, $currency), $unpaid['amounts'], array_keys($unpaid['amounts']))) . ($unpaid['overdue'] ? ' · ' . self::t(':count overdue', ['count' => $unpaid['overdue']]) : '')],
+            ]);
+        }
+
+        // Watching
         $streams = $overview['streams'];
         $converting = count(array_filter($streams, fn ($s) => $s['transcode']));
-        $plays = array_sum($overview['days']);
-        $watch = array_sum(array_column($overview['people'], 'watch_ms'));
-        $watching = count(array_filter($overview['people'], fn ($p) => empty($p['unknown'])));
-        $servers = array_count_values(array_filter(array_column($streams, 'server')));
-        uksort($servers, fn ($a, $b) => [$servers[$b], $a] <=> [$servers[$a], $b]); // most first, then by name
-        $perServer = implode(', ', array_map(fn ($name, $count) => $count . ' ' . $name, array_keys($servers), $servers));
-        $cards = [
-            [self::t('Streaming now'), (string) count($streams), implode(' · ', array_filter([$perServer, $converting ? self::t(':count converting', ['count' => $converting]) : ($streams ? self::t('all played directly') : '')]))],
-            [self::t('Plays'), number_format($plays, 0, self::t('.'), self::t(',')), self::t('Last 30 days')],
-            [self::t('Watch time'), $this->duration($watch), self::t('Last 30 days')],
-            [self::t('Customers watching'), $watching . ' / ' . $overview['paying'], self::t('of the active subscriptions, last 30 days')],
-        ];
-        $html .= '<div class="ps-periods ps-four">';
-        foreach ($cards as [$label, $value, $note]) {
-            $html .= '<div class="ps-card"><div class="ps-label">' . $e($label) . '</div><div class="ps-value">' . $e($value) . '</div><div class="ps-muted ps-small">' . $e($note) . '</div></div>';
+        $plays = 0;
+        foreach ($overview['days'] as $perServer) {
+            $plays += array_sum($perServer);
         }
-        $html .= '</div>';
+        $watch = array_sum(array_column($overview['people'], 'watch_ms'));
+        $watching = count(array_filter($overview['people'], fn ($p) => empty($p['unknown']) && $p['plays'] > 0));
+        $live = array_count_values(array_filter(array_column($streams, 'server')));
+        uksort($live, fn ($a, $b) => [$live[$b], $a] <=> [$live[$a], $b]); // most first, then by name
+        $perServer = implode(', ', array_map(fn ($name, $n) => $n . ' ' . $name, array_keys($live), $live));
+        $html .= $cardsRow([
+            [self::t('Streaming now'), (string) count($streams), implode(' · ', array_filter([$perServer, $converting ? self::t(':count converting', ['count' => $converting]) : ($streams ? self::t('all played directly') : '')]))],
+            [self::t('Plays'), number_format($plays, 0, self::t('.'), self::t(',')), self::t('Last 30 days, everyone')],
+            [self::t('Watch time'), $this->duration($watch), self::t('Last 30 days, everyone')],
+            [self::t('Customers watching'), $watching . ' / ' . $overview['paying'], self::t('of the active subscriptions, last 30 days')],
+        ]);
+
+        // Subscriptions per server (Paymenter)
+        if ($business !== null && $business['servers']) {
+            $html .= $section('where-you-watch', self::t('Subscriptions per server')) . '<div class="ps-card ps-table ps-scroll"><table class="ps-tab"><thead><tr><th>' . $e(self::t('Server')) . '</th><th>' . $e(self::t('Active')) . '</th><th>' . $e(self::t('Trials')) . '</th><th>' . $e(self::t('Suspended')) . '</th><th>' . $e(self::t('Pending')) . '</th><th>' . $e(self::t('Cancelled')) . '</th><th>' . $e(self::t('Customers')) . '</th></tr></thead><tbody>';
+            foreach ($business['servers'] as $row) {
+                $html .= '<tr><td class="ps-title">' . $e($row['name']) . '</td><td>' . $row['active'] . '</td><td>' . $row['trials'] . '</td><td>' . $row['suspended'] . '</td><td>' . $row['pending'] . '</td><td>' . $row['cancelled'] . '</td><td>' . $row['customers'] . '</td></tr>';
+            }
+            $html .= '</tbody></table></div>';
+        }
+
+        // Media servers (Tracearr, Silo)
+        if ($servers) {
+            $html .= $section('now-playing', self::t('Media servers')) . '<div class="ps-card ps-table ps-scroll"><table class="ps-tab"><thead><tr><th>' . $e(self::t('Server')) . '</th><th>' . $e(self::t('Users')) . '</th><th>' . $e(self::t('Customers')) . '</th><th>' . $e(self::t('Streaming now')) . '</th><th>' . $e(self::t('Plays, 30 days')) . '</th><th>' . $e(self::t('Watch time, 30 days')) . '</th></tr></thead><tbody>';
+            foreach ($servers as $row) {
+                $state = $row['historical'] ? '<span class="ps-badge">' . $e(self::t('History only')) . '</span>'
+                    : ($row['status'] === 'up' ? '<span class="ps-badge ps-badge-ok">' . $e(self::t('Online')) . '</span>' : ($row['status'] === 'down' ? '<span class="ps-badge ps-badge-warn">' . $e(self::t('Offline')) . '</span>' : ''));
+                $html .= '<tr><td><span class="ps-dot" style="background:' . $colour($row['name']) . '"></span><span class="ps-title">' . $e($row['name']) . '</span> ' . $state . '</td><td>' . ($row['users'] ?? '–') . '</td><td>' . $row['customers'] . '</td><td>' . $row['streams'] . '</td><td>' . $row['plays'] . '</td><td>' . $e($this->duration($row['watch_ms'])) . '</td></tr>';
+            }
+            $html .= '</tbody></table></div><p class="ps-muted ps-tiny ps-gap">' . $e(self::t('A play counts once 2 minutes are watched. "History only": a server whose history was imported into Tracearr, without a live connection.')) . '</p>';
+        }
+
+        if ($business !== null) {
+            // Growth and renewals
+            $growth = $business['growth'];
+            $html .= $section('when-you-watch', self::t('Last 30 days')) . $cardsRow([
+                [self::t('New subscriptions'), (string) $growth['new'], self::t('Paid, last 30 days')],
+                [self::t('New trials'), (string) $growth['new_trials'], self::t('Last 30 days')],
+                [self::t('Cancelled'), (string) $growth['cancelled'], self::t('Paid, last 30 days')],
+                [self::t('Renewing soon'), (string) count($business['renewals']), self::t('In the next 7 days')],
+            ]);
+            if ($business['renewals']) {
+                $html .= '<div class="ps-card ps-table ps-gap">';
+                foreach ($business['renewals'] as $row) {
+                    $html .= '<div class="ps-row"><div class="ps-grow"><div class="ps-title">' . $e($row['name']) . '</div><div class="ps-tiny ps-muted">' . $e($row['product']) . '</div></div>'
+                        . '<div class="ps-amount"><div class="ps-title">' . $e($this->money($row['amount'], $row['currency'])) . '</div><div class="ps-tiny ps-muted">' . $e(date(self::t('M j, Y'), $row['date'])) . '</div></div></div>';
+                }
+                $html .= '</div>';
+            }
+
+            // Revenue per product
+            if ($business['products']) {
+                $top = max(0.01, $business['products'][0]['monthly']);
+                $html .= $section('favourite-genres', self::t('Revenue per product')) . '<div class="ps-card ps-table">';
+                foreach ($business['products'] as $row) {
+                    $html .= '<div class="ps-row"><div class="ps-grow"><div class="ps-title">' . $e($row['product']) . '</div><div class="ps-tiny ps-muted">' . $e($row['count'] === 1 ? self::t('1 subscription') : self::t(':count subscriptions', ['count' => $row['count']])) . '</div></div>'
+                        . '<div class="ps-amount"><div class="ps-title">' . $e(self::t(':amount / month', ['amount' => $this->money($row['monthly'], $row['currency'])])) . '</div>' . $bar($row['monthly'] / $top) . '</div></div>';
+                }
+                $html .= '</div>';
+            }
+
+            // Customers
+            $discord = $business['discord'];
+            $requests = $business['requests'];
+            $html .= $section('your-shows', self::t('Customers')) . $cardsRow(array_values(array_filter([
+                [self::t('Not watching'), (string) count($business['idle']), self::t('Paying, nothing watched in 30 days')],
+                [self::t('Discord connected'), $discord['connected'] . ' / ' . $business['paying'], self::t('of the paying customers')],
+                [self::t('Left the Discord'), (string) count($discord['warned']), $discord['suspended'] ? self::t(':count suspended for it', ['count' => $discord['suspended']]) : self::t('Warned, not suspended yet')],
+                $requests === null ? null : [self::t('Requests used'), (string) $requests['used'], self::t(':count with their limit used up', ['count' => count($requests['full'])])],
+            ])));
+            $people = function (array $rows, callable $right) use ($e): string {
+                $html = '<div class="ps-card ps-table ps-gap">';
+                foreach ($rows as $row) {
+                    $html .= '<div class="ps-row"><div class="ps-grow"><div class="ps-title">' . $e($row['name']) . '</div><div class="ps-tiny ps-muted">' . $e($row['email']) . '</div></div><div class="ps-amount ps-tiny">' . $right($row) . '</div></div>';
+                }
+
+                return $html . '</div>';
+            };
+            if ($business['idle']) {
+                $html .= '<h3 class="ps-sub">' . $e(self::t('Paying, nothing watched in 30 days')) . '</h3>' . $people($business['idle'], fn ($row) => $e(implode(', ', array_unique($row['products']))));
+            }
+            if ($discord['warned']) {
+                $html .= '<h3 class="ps-sub">' . $e(self::t('Left the Discord')) . '</h3>' . $people($discord['warned'], fn ($row) => $e($row['product']) . '<br>' . $e(self::t('since :date', ['date' => date(self::t('M j, Y') . ' H:i', $row['since'])])));
+            }
+            if ($requests !== null && $requests['full']) {
+                $html .= '<h3 class="ps-sub">' . $e(self::t('Request limit used up')) . '</h3>' . $people($requests['full'], fn ($row) => $e($row['label']) . '<br>' . $e($row['used'] . ' / ' . $row['limit']));
+            }
+        }
 
         // Now playing
-        $html .= '<h2 class="ps-h">' . $this->icon('now-playing') . $e(self::t('Streaming now')) . '</h2>';
+        $html .= $section('now-playing', self::t('Streaming now'));
         if (!$streams) {
             $html .= '<p class="ps-card ps-note ps-muted">' . $e(self::t('Nobody is watching right now.')) . '</p>';
         } else {
@@ -934,11 +1195,24 @@ class PaywarrStats extends Extension
             $html .= '</div>';
         }
 
-        // Plays per day
-        $max = max(1, max($overview['days']));
-        $html .= '<h2 class="ps-h">' . $this->icon('when-you-watch') . $e(self::t('Plays per day')) . '</h2><div class="ps-card"><div class="ps-days">';
-        foreach ($overview['days'] as $day => $count) {
-            $html .= '<div class="ps-col" title="' . $e(date(self::t('M j, Y'), strtotime($day)) . ': ' . $count) . '"><span class="ps-colbar"><span style="height:' . ($count > 0 ? max(3, (int) round(100 * $count / $max)) : 0) . '%"></span></span></div>';
+        // Plays per day, per server
+        $max = 1;
+        $totals = [];
+        foreach ($overview['days'] as $perServer) {
+            $max = max($max, array_sum($perServer));
+            foreach ($perServer as $name => $n) {
+                $totals[$name] = ($totals[$name] ?? 0) + $n;
+            }
+        }
+        $html .= $section('when-you-watch', self::t('Plays per day')) . '<div class="ps-card"><div class="ps-days">';
+        foreach ($overview['days'] as $day => $perServer) {
+            $sum = array_sum($perServer);
+            $tip = date(self::t('M j, Y'), strtotime($day)) . ': ' . $sum . ($perServer ? ' (' . implode(', ', array_map(fn ($name, $n) => $n . ' ' . ($name !== '' ? $name : '?'), array_keys($perServer), $perServer)) . ')' : '');
+            $html .= '<div class="ps-col" title="' . $e($tip) . '"><span class="ps-tiny ps-n">' . ($sum > 0 ? $sum : '&nbsp;') . '</span><span class="ps-colbar ps-stack">';
+            foreach ($perServer as $name => $n) {
+                $html .= '<span style="height:' . round(100 * $n / $max, 2) . '%;background:' . $colour((string) $name) . '"></span>';
+            }
+            $html .= '</span></div>';
         }
         // Three dates under the bars, so they never run into each other on a phone.
         $dates = array_keys($overview['days']);
@@ -946,27 +1220,40 @@ class PaywarrStats extends Extension
         foreach ([$dates[0], $dates[intdiv(count($dates), 2)], end($dates)] as $day) {
             $html .= '<span>' . $e(date(self::t('j/n'), strtotime($day))) . '</span>';
         }
-        $html .= '</div></div>';
+        $html .= '</div>';
+        if ($totals) {
+            arsort($totals);
+            $html .= '<div class="ps-legend ps-small">';
+            foreach ($totals as $name => $n) {
+                $html .= '<span><span class="ps-dot" style="background:' . $colour((string) $name) . '"></span>' . $e(($name !== '' ? $name : '?') . ': ' . $n) . '</span>';
+            }
+            $html .= '</div>';
+        }
+        $html .= '</div>';
 
-        // Top titles
+        // Top titles, with who watched them and where
         if ($overview['titles']) {
-            $html .= '<h2 class="ps-h">' . $this->icon('favourite-genres') . $e(self::t('Most watched, last 30 days')) . '</h2><div class="ps-posters">';
+            $html .= $section('favourite-genres', self::t('Most watched, last 30 days')) . '<div class="ps-posters">';
             foreach ($overview['titles'] as $n => $title) {
+                $who = $title['viewers'] ?? [];
                 $html .= '<div class="ps-tile">' . $poster($title['poster'], $title['title'], 'ps-cover') . '<span class="ps-rank">' . ($n + 1) . '</span>'
                     . '<div class="ps-title ps-clip">' . $e($title['title']) . '</div>'
-                    . '<div class="ps-muted ps-small">' . $e($title['plays'] === 1 ? self::t('1 play') : self::t(':count plays', ['count' => $title['plays']])) . ' · ' . $e($this->duration($title['watch_ms'])) . '</div></div>';
+                    . '<div class="ps-muted ps-small">' . $e($title['plays'] === 1 ? self::t('1 play') : self::t(':count plays', ['count' => $title['plays']])) . ' · ' . $e($this->duration($title['watch_ms'])) . '</div>'
+                    . ($who ? '<div class="ps-muted ps-tiny ps-clip" title="' . $e(implode(', ', $who)) . '">' . $e(self::t('By :names', ['names' => implode(', ', array_slice($who, 0, 3)) . (count($who) > 3 ? ' +' . (count($who) - 3) : '')])) . '</div>' : '')
+                    . (($title['servers'] ?? []) ? '<div class="ps-tiny ps-clip">' . implode(' ', array_map(fn ($name) => '<span class="ps-dot" style="background:' . $colour($name) . '"></span>' . $e($name), $title['servers'])) . '</div>' : '')
+                    . '</div>';
             }
             $html .= '</div>';
         }
 
-        // Most active customers
+        // Most active: everyone on the servers
         if ($overview['people']) {
             $top = max(1, $overview['people'][0]['watch_ms']);
-            $html .= '<h2 class="ps-h">' . $this->icon('your-shows') . $e(self::t('Most active, last 30 days')) . '</h2><div class="ps-card ps-table">';
+            $html .= $section('your-shows', self::t('Most active, last 30 days')) . '<div class="ps-card ps-table">';
             foreach (array_slice($overview['people'], 0, 25) as $person) {
                 $html .= '<div class="ps-row"><div class="ps-grow">' . $customer($person) . '</div>'
                     . '<div class="ps-amount"><div class="ps-title">' . $e($this->duration($person['watch_ms'])) . '</div><div class="ps-tiny">'
-                    . $e(($person['plays'] === 1 ? self::t('1 play') : self::t(':count plays', ['count' => $person['plays']])) . ' · ' . implode(', ', array_keys($person['servers']))) . '</div>'
+                    . $e(($person['plays'] === 1 ? self::t('1 play') : self::t(':count plays', ['count' => $person['plays']])) . ' · ' . implode(', ', $person['servers'])) . '</div>'
                     . $bar($person['watch_ms'] / $top) . '</div></div>';
             }
             $html .= '</div>';
@@ -977,7 +1264,7 @@ class PaywarrStats extends Extension
 
     private function adminCss(): string
     {
-        return '#paywarr-stats .ps-four{grid-template-columns:repeat(auto-fit,minmax(min(100%,12rem),1fr))}'
+        return '#paywarr-stats .ps-four{grid-template-columns:repeat(auto-fit,minmax(min(100%,9.5rem),1fr))}'
             . '#paywarr-stats .ps-warn{border-color:hsl(var(--color-primary));margin-bottom:1rem}'
             . '#paywarr-stats .ps-badge{display:inline-block;padding:.05rem .45rem;border-radius:9999px;font-size:.7rem;font-weight:600;border:1px solid currentColor}'
             . '#paywarr-stats .ps-badge-ok{color:hsl(142 60% 50%)}#paywarr-stats .ps-badge-warn{color:hsl(var(--color-primary))}'
@@ -992,7 +1279,18 @@ class PaywarrStats extends Extension
             . '#paywarr-stats .ps-table{padding:.4rem 1.3rem}'
             . '#paywarr-stats .ps-row{display:flex;gap:1rem;align-items:center;padding:.8rem 0;border-bottom:1px solid hsl(var(--color-neutral))}'
             . '#paywarr-stats .ps-row:last-child{border-bottom:0}'
-            . '#paywarr-stats .ps-amount{width:min(40%,14rem);text-align:right}#paywarr-stats .ps-amount .ps-bar{margin-top:.4rem}';
+            . '#paywarr-stats .ps-amount{width:min(40%,14rem);text-align:right}#paywarr-stats .ps-amount .ps-bar{margin-top:.4rem}'
+            . '#paywarr-stats .ps-scroll{overflow-x:auto}'
+            . '#paywarr-stats .ps-tab{width:100%;border-collapse:collapse;font-size:.9rem}'
+            . '#paywarr-stats .ps-tab th{text-align:left;font-size:.7rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;opacity:.6;padding:.7rem .6rem .5rem;white-space:nowrap}'
+            . '#paywarr-stats .ps-tab td{padding:.65rem .6rem;border-top:1px solid hsl(var(--color-neutral));white-space:nowrap}'
+            . '#paywarr-stats .ps-tab th:not(:first-child),#paywarr-stats .ps-tab td:not(:first-child){text-align:right}'
+            . '#paywarr-stats .ps-dot{display:inline-block;width:.6rem;height:.6rem;border-radius:9999px;margin-right:.4rem;vertical-align:middle}'
+            . '#paywarr-stats .ps-stack{display:flex;flex-direction:column-reverse;justify-content:flex-start;overflow:hidden}'
+            . '#paywarr-stats .ps-stack>span{display:block;width:100%;flex:none}'
+            . '#paywarr-stats .ps-stack>span{border-radius:0}#paywarr-stats .ps-n{font-weight:700;opacity:.75;line-height:1}'
+            . '#paywarr-stats .ps-legend{display:flex;flex-wrap:wrap;gap:.4rem 1.2rem;margin-top:.8rem}'
+            . '#paywarr-stats .ps-sub{margin:1.2rem 0 .2rem;font-size:.95rem;font-weight:700}';
     }
 
     /** A small line icon for a section heading, in the theme's text colour. */
@@ -1082,6 +1380,12 @@ class PaywarrStats extends Extension
         return $hours > 0
             ? self::t(':hours h :minutes min', ['hours' => $hours, 'minutes' => $minutes % 60])
             : self::t(':minutes min', ['minutes' => $minutes]);
+    }
+
+    /** An amount with its currency code, e.g. "99.00 DKK". */
+    public function money(float $amount, string $currency): string
+    {
+        return trim(number_format($amount, 2, self::t('.'), self::t(',')) . ' ' . $currency);
     }
 
     private function client(): TracearrClient

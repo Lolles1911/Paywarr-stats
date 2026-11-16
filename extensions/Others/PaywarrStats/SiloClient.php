@@ -62,6 +62,22 @@ class SiloClient
         return $plays;
     }
 
+    /** Every account on Silo (id, username, role, enabled), in pages of up to 200. */
+    public function accounts(int $max = 10000): array
+    {
+        $accounts = [];
+        $cursor = null;
+        do {
+            $page = $this->call('/api/v2/admin/users', array_filter(['limit' => 200, 'cursor' => $cursor]));
+            foreach ($page['items'] ?? [] as $account) {
+                $accounts[] = $account;
+            }
+            $cursor = !empty($page['page']['has_more']) ? ($page['page']['next_cursor'] ?? null) : null;
+        } while ($cursor !== null && count($accounts) < $max);
+
+        return $accounts;
+    }
+
     /** Every playback going on right now, all accounts (admin:monitor:read). */
     public function sessions(): array
     {

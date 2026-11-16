@@ -5,9 +5,9 @@ namespace Paymenter\Extensions\Others\PaywarrStats;
 use Throwable;
 
 /**
- * The administrators' overview: what all customers stream right now, the
- * most watched titles, the most active customers and plays per day, from
- * Silo and Tracearr together. Each media server user is shown as the
+ * The administrators' overview: what is streamed right now, the most
+ * watched titles, the most active users and plays per day, per server, from
+ * Silo and Tracearr together: everyone on the servers, customers or not. Each media server user is shown as the
  * Paymenter customer Paywarr noted it for, with their subscription.
  */
 class AdminOverview
@@ -23,6 +23,9 @@ class AdminOverview
      *                                           ("|<username>" for users noted without a type):
      *                                           name, email, products, status, paid_until
      */
+    /** Tracearr counts a play once two minutes are watched, or it was marked watched. */
+    public const COUNTED_MS = 120000;
+
     public function gather(array $customers, ?int $now = null): array
     {
         $now ??= time();
@@ -30,9 +33,10 @@ class AdminOverview
         $streams = [];
         $titles = [];
         $people = [];
+        $servers = [];
         $days = [];
         for ($i = 29; $i >= 0; $i--) {
-            $days[date('Y-m-d', strtotime("-$i days", $now))] = 0;
+            $days[date('Y-m-d', strtotime("-$i days", $now))] = [];
         }
         $attempt = function (string $source, callable $fn) use (&$errors) {
             try {
@@ -41,71 +45,118 @@ class AdminOverview
                 $errors[] = $source . ': ' . $e->getMessage();
             }
         };
+        $server = function (string $name, string $type) use (&$servers): void {
+            $servers[$name] ??= ['name' => $name, 'type' => $type, 'status' => 'unknown', 'historical' => false, 'streams' => 0, 'users' => null, 'customers' => 0, 'plays' => 0, 'watch_ms' => 0];
+        };
 
         if ($this->silo) {
-            $attempt('Silo', function () use (&$streams, $customers) {
+            $server('Silo', 'silo');
+            $attempt('Silo', function () use (&$streams, &$servers, $customers) {
                 foreach ($this->silo->sessions() as $session) {
                     $streams[] = $this->siloStream($session, $customers);
+                    $servers['Silo']['streams']++;
                 }
+                $servers['Silo']['status'] = 'up';
             });
-            $attempt('Silo', function () use (&$titles, &$people, $customers) {
+            $attempt('Silo', function () use (&$titles, &$people, &$servers, $customers) {
                 $top = $this->silo->topActivity(30);
                 foreach ($top['titles'] ?? [] as $title) {
                     $this->addTitle($titles, (string) ($title['title'] ?? ''), (string) ($title['media_type'] ?? ''), (int) ($title['plays'] ?? 0),
-                        1000 * (int) ($title['total_seconds'] ?? 0), ($title['media_item_id'] ?? '') !== '' ? 'silo:' . $title['media_item_id'] : '');
+                        1000 * (int) ($title['total_seconds'] ?? 0), ($title['media_item_id'] ?? '') !== '' ? 'silo:' . $title['media_item_id'] : '', 'Silo');
                 }
                 foreach ($top['profiles'] ?? [] as $profile) {
                     $who = $customers['silo|' . ($profile['user_id'] ?? '')] ?? null;
-                    $this->addPerson($people, $who, (string) ($profile['username'] ?? ''), 'Silo', (int) ($profile['plays'] ?? 0), 1000 * (int) ($profile['total_seconds'] ?? 0));
+                    $plays = (int) ($profile['plays'] ?? 0);
+                    $ms = 1000 * (int) ($profile['total_seconds'] ?? 0);
+                    $this->addPerson($people, $who, (string) ($profile['username'] ?? ''), 'Silo', $plays, $ms);
+                    $servers['Silo']['watch_ms'] += $ms;
                 }
             });
-            $attempt('Silo', function () use (&$days) {
+            $attempt('Silo', function () use (&$days, &$servers) {
                 foreach ($this->silo->playsPerHour(720) as $bucket) {
                     $day = ($ts = strtotime((string) ($bucket['hour'] ?? ''))) ? date('Y-m-d', $ts) : null;
                     if ($day !== null && isset($days[$day])) {
-                        $days[$day] += (int) ($bucket['direct'] ?? 0) + (int) ($bucket['remux'] ?? 0) + (int) ($bucket['transcode'] ?? 0);
+                        $count = (int) ($bucket['direct'] ?? 0) + (int) ($bucket['remux'] ?? 0) + (int) ($bucket['transcode'] ?? 0);
+                        $days[$day]['Silo'] = ($days[$day]['Silo'] ?? 0) + $count;
+                        $servers['Silo']['plays'] += $count;
                     }
                 }
             });
+            // Accounts need more than monitoring rights: without them the count is left out.
+            try {
+                $accounts = array_filter($this->silo->accounts(), fn ($a) => ($a['role'] ?? '') !== 'admin');
+                $servers['Silo']['users'] = count($accounts);
+                $servers['Silo']['customers'] = count(array_filter($accounts, fn ($a) => isset($customers['silo|' . ($a['id'] ?? '')])));
+            } catch (Throwable $e) {
+                // No count.
+            }
         }
 
         if ($this->tracearr) {
-            $attempt('Tracearr', function () use (&$streams, $customers) {
+            $names = [];
+            $attempt('Tracearr', function () use (&$names, &$servers, $server) {
+                foreach ($this->tracearr->servers() as $row) {
+                    $name = (string) ($row['server_name'] ?? '');
+                    if ($name === '') {
+                        continue;
+                    }
+                    $names[(string) ($row['server_id'] ?? '')] = $name;
+                    $server($name, strtolower((string) ($row['server_type'] ?? '')));
+                    $servers[$name]['status'] = (string) ($row['status'] ?? 'unknown');
+                    $servers[$name]['historical'] = !empty($row['historical']);
+                }
+            });
+            $attempt('Tracearr', function () use (&$streams, &$servers, $server, $customers) {
                 foreach ($this->tracearr->streams() as $stream) {
                     $streams[] = $this->tracearrStream($stream, $customers);
-                }
-            });
-            $attempt('Tracearr', function () use (&$titles) {
-                foreach (['movie', 'show'] as $type) {
-                    foreach ($this->tracearr->topMedia($type, 30) as $title) {
-                        $name = (string) ($title['title'] ?? '') . ($type === 'movie' && !empty($title['year']) ? ' (' . $title['year'] . ')' : '');
-                        $this->addTitle($titles, $name, $type, (int) ($title['plays'] ?? 0), (int) ($title['watch_time_ms'] ?? 0), '', (string) ($title['media_id'] ?? ''));
+                    $name = (string) ($stream['server_name'] ?? '');
+                    if ($name !== '') {
+                        $server($name, strtolower((string) ($stream['server_type'] ?? '')));
+                        $servers[$name]['streams']++;
                     }
                 }
             });
-            $attempt('Tracearr', function () use (&$days) {
-                foreach ($this->tracearr->playsPerDay($this->timezone) as $row) {
-                    $day = substr((string) ($row['date'] ?? ''), 0, 10);
-                    if (isset($days[$day])) {
-                        $days[$day] += (int) ($row['count'] ?? 0);
+            $attempt('Tracearr', function () use (&$titles, &$people, &$days, &$servers, $server, $customers, $now) {
+                foreach ($this->tracearr->history($now - 30 * 86400) as $play) {
+                    $name = (string) ($play['server_name'] ?? '');
+                    $type = strtolower((string) ($play['server_type'] ?? ''));
+                    $username = (string) ($play['user']['username'] ?? '');
+                    $ms = max(0, (int) ($play['duration_ms'] ?? 0));
+                    $counted = $ms >= self::COUNTED_MS || !empty($play['watched']);
+                    $who = $customers[$type . '|' . strtolower($username)] ?? $customers['|' . strtolower($username)] ?? null;
+                    if ($name !== '') {
+                        $server($name, $type);
+                        $servers[$name]['watch_ms'] += $ms;
                     }
+                    $this->addPerson($people, $who, $username, $name !== '' ? $name : ucfirst($type), $counted ? 1 : 0, $ms);
+                    if (!$counted) {
+                        continue;
+                    }
+                    $day = ($ts = strtotime((string) ($play['started_at'] ?? ''))) ? date('Y-m-d', $ts) : null;
+                    if ($day !== null && isset($days[$day])) {
+                        $days[$day][$name] = ($days[$day][$name] ?? 0) + 1;
+                        if ($name !== '') {
+                            $servers[$name]['plays']++;
+                        }
+                    }
+                    $show = (string) ($play['show_title'] ?? '');
+                    $title = $show !== '' ? $show : (string) ($play['media_title'] ?? '') . (($play['media_type'] ?? '') === 'movie' && !empty($play['year']) ? ' (' . $play['year'] . ')' : '');
+                    $poster = (string) ($play['poster_url'] ?? '');
+                    $this->addTitle($titles, $title, $show !== '' ? 'show' : (string) ($play['media_type'] ?? ''), 1, $ms,
+                        str_starts_with($poster, '/api/v1/images/proxy?') ? $poster : '', $name, $who['name'] ?? $username);
                 }
             });
-            $attempt('Tracearr', function () use (&$people, $customers) {
-                // Only users Paywarr noted for a customer: one call each.
+            $attempt('Tracearr', function () use (&$servers, $names, $customers) {
                 foreach ($this->tracearr->users() as $identity) {
                     foreach ($identity['accounts'] ?? [] as $account) {
-                        if (!empty($account['removed_at'])) {
+                        $name = $names[(string) ($account['server_id'] ?? '')] ?? null;
+                        if ($name === null || !empty($account['removed_at'])) {
                             continue;
                         }
-                        $type = strtolower((string) ($account['server_type'] ?? ''));
-                        $name = strtolower((string) ($account['username'] ?? ''));
-                        $who = $customers[$type . '|' . $name] ?? $customers['|' . $name] ?? null;
-                        if ($who !== null) {
-                            $window = $this->tracearr->userStats((string) $identity['id'])['windows']['last_30'] ?? [];
-                            $this->addPerson($people, $who, (string) $account['username'], ucfirst($type), (int) ($window['plays'] ?? 0), (int) ($window['watch_time_ms'] ?? 0));
-
-                            continue 2;
+                        $servers[$name]['users'] = ($servers[$name]['users'] ?? 0) + 1;
+                        $key = strtolower((string) ($account['server_type'] ?? '')) . '|' . strtolower((string) ($account['username'] ?? ''));
+                        if (isset($customers[$key]) || isset($customers['|' . strtolower((string) ($account['username'] ?? ''))])) {
+                            $servers[$name]['customers']++;
                         }
                     }
                 }
@@ -116,19 +167,18 @@ class AdminOverview
         uasort($titles, fn ($a, $b) => [$b['plays'], $b['watch_ms']] <=> [$a['plays'], $a['watch_ms']]);
         uasort($people, fn ($a, $b) => [$b['watch_ms'], $b['plays']] <=> [$a['watch_ms'], $a['plays']]);
         $titles = array_slice(array_values($titles), 0, 12);
-        // Tracearr's top list has no posters: one look per title shown, at its latest play.
         foreach ($titles as &$title) {
-            if ($title['poster_path'] === '' && $title['tracearr_id'] !== '' && $this->tracearr) {
-                try {
-                    $title['poster_path'] = (string) $this->tracearr->mediaPoster($title['tracearr_id']);
-                } catch (Throwable $e) {
-                    // No poster; the letter stays.
-                }
-            }
-            unset($title['tracearr_id']);
+            $title['viewers'] = array_keys($title['viewers']);
+            $title['servers'] = array_keys($title['servers']);
         }
         unset($title);
-        $people = array_values(array_filter($people, fn ($person) => $person['plays'] > 0));
+        $people = array_values(array_filter($people, fn ($person) => $person['plays'] > 0 || $person['watch_ms'] > 0));
+        foreach ($people as &$person) {
+            $person['servers'] = array_keys($person['servers']);
+        }
+        unset($person);
+        // Live servers first, most plays first; servers with only imported history last.
+        uasort($servers, fn ($a, $b) => [$a['historical'], -$a['plays'], $a['name']] <=> [$b['historical'], -$b['plays'], $b['name']]);
 
         // Posters by number, as on "My stats".
         $posters = [];
@@ -168,6 +218,7 @@ class AdminOverview
             'titles' => $titles,
             'people' => $people,
             'days' => $days,
+            'servers' => array_values($servers),
             'paying' => count($emails),
             'posters' => $posters,
             'errors' => array_values(array_unique($errors)),
@@ -221,20 +272,23 @@ class AdminOverview
         return $customer ?? ['name' => $username !== '' ? $username : '?', 'email' => '', 'products' => [], 'status' => '', 'paid_until' => null, 'unknown' => true];
     }
 
-    private function addTitle(array &$titles, string $title, string $type, int $plays, int $ms, string $poster, string $tracearrId = ''): void
+    private function addTitle(array &$titles, string $title, string $type, int $plays, int $ms, string $poster, string $server = '', string $viewer = ''): void
     {
         if ($title === '') {
             return;
         }
         $key = strtolower($title);
-        $titles[$key] ??= ['title' => $title, 'type' => $type, 'plays' => 0, 'watch_ms' => 0, 'poster_path' => '', 'tracearr_id' => ''];
-        if ($titles[$key]['tracearr_id'] === '') {
-            $titles[$key]['tracearr_id'] = $tracearrId;
-        }
+        $titles[$key] ??= ['title' => $title, 'type' => $type, 'plays' => 0, 'watch_ms' => 0, 'poster_path' => '', 'viewers' => [], 'servers' => []];
         $titles[$key]['plays'] += $plays;
         $titles[$key]['watch_ms'] += $ms;
         if ($titles[$key]['poster_path'] === '') {
             $titles[$key]['poster_path'] = $poster;
+        }
+        if ($server !== '') {
+            $titles[$key]['servers'][$server] = true;
+        }
+        if ($viewer !== '') {
+            $titles[$key]['viewers'][$viewer] = true;
         }
     }
 

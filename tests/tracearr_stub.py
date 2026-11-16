@@ -25,7 +25,7 @@ from urllib.parse import parse_qs, urlparse
 
 def fresh_state() -> dict:
     return {"key": "trr_pub_test", "identities": [], "stats": {}, "history": {}, "watched": {}, "requests": [],
-            "streams": [], "top_media": {"movie": [], "show": []}, "activity": [], "media_history": {},
+            "streams": [], "top_media": {"movie": [], "show": []}, "activity": [], "media_history": {}, "servers": [], "all_history": [],
             "silo": {"summary": {}, "history": {}, "items": {}, "ignore_user_filter": False,
                      "profiles": [{"id": "p-owner", "is_primary": True, "has_pin": False}, {"id": "p-kid", "is_primary": False, "has_pin": False}]}}
 
@@ -120,6 +120,16 @@ class Handler(BaseHTTPRequestHandler):
             page = STATE["identities"][start:start + page_size]
             nxt = str(start + page_size) if start + page_size < len(STATE["identities"]) else None
             return self.send_json(200, {"data": page, "meta": {"nextCursor": nxt, "pageSize": page_size}})
+        if method == "GET" and path == "/servers":
+            return self.send_json(200, {"data": STATE["servers"], "tracearr_version": "test"})
+        if method == "GET" and path == "/history":
+            if page_size > 100:
+                return self.send_json(400, {"message": "Invalid query parameters"})
+            since = query.get("since", "")
+            plays = [p for p in STATE["all_history"] if not since or p.get("started_at", "") >= since]
+            start = int(query.get("cursor", "0") or 0)
+            nxt = str(start + page_size) if start + page_size < len(plays) else None
+            return self.send_json(200, {"data": plays[start:start + page_size], "meta": {"nextCursor": nxt, "pageSize": page_size}})
         if method == "GET" and path == "/streams":
             return self.send_json(200, {"data": STATE["streams"], "summary": {"total": len(STATE["streams"])}})
         if method == "GET" and len(parts) == 3 and parts[0] == "media" and parts[2] == "history":
@@ -177,6 +187,10 @@ class Handler(BaseHTTPRequestHandler):
             chunk = rows[start:start + limit]
             more = start + limit < len(rows)
             return self.send_json(200, {"items": chunk, "page": {"has_more": more, **({"next_cursor": str(start + limit)} if more else {})}})
+        if method == "GET" and path == "/api/v2/admin/users":
+            if monitor_only:
+                return self.send_json(403, {"title": "permission_denied", "status": 403})
+            return self.send_json(200, {"items": silo.get("accounts", []), "page": {"has_more": False}})
         if method == "GET" and path == "/api/v2/admin/sessions":
             return self.send_json(200, {"items": silo.get("sessions", []), "page": {"has_more": False}})
         if method == "GET" and path == "/api/v2/admin/stats/top-activity":
