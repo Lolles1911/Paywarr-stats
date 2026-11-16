@@ -22,7 +22,7 @@ use Throwable;
 #[ExtensionMeta(
     name: 'Paywarr Stats',
     description: 'Shows each customer their own watch statistics from Tracearr or Silo, on a page in the client area.',
-    version: '1.6.0',
+    version: '1.7.0',
     author: 'Paywarr',
     url: 'https://github.com/Lolles1911/Paywarr-stats',
 )]

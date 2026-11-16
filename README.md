@@ -78,21 +78,41 @@ What changed in each version is on the
 
 Paymenter staff (anyone whose role may view services, `admin.services.view`)
 also get **Stats overview** in the menu, at `/stats/admin`. Customers never see
-it; for them the address doesn't exist. It shows, for Silo and Tracearr
-together:
+it; for them the address doesn't exist.
 
+**Your business**, from Paymenter (Paywarr's subscriptions):
+
+- **Monthly revenue** of the active paid subscriptions (yearly plans / 12 and
+  so on), per currency, and **per product**
+- **Paying customers**, **trials running** and the share of finished trials
+  that became paying, **unpaid invoices** and how many are overdue
+- **Subscriptions per server**: active, trials, suspended, pending, cancelled
+- **Last 30 days**: new subscriptions, new trials, cancelled, and who renews in
+  the next 7 days
+- **Customers**: paying but nothing watched in 30 days, Discord connected, who
+  left the Discord, and requests used, with who has used their limit up
+  (requests need Paywarr 1.23 or newer, and are kept for 10 minutes)
+
+**Everyone on your servers**, from Silo and Tracearr together, customers or not:
+
+- **Media servers**: users, customers, streaming now, plays and watch time per
+  server, online or not; "History only" for a server whose history was
+  imported into Tracearr without a live connection
 - **Streaming now:** who, as the Paymenter customer with their subscription,
   status and paid-until date; what, on which device and server, played
   directly or converted, how far
-- **Plays per day** over the last 30 days
-- **Most watched** titles of the last 30 days, with posters
-- **Most active** customers of the last 30 days, by watch time
+- **Plays per day** over the last 30 days, coloured per server
+- **Most watched** titles of the last 30 days, with posters, who watched them
+  and on which server
+- **Most active** users of the last 30 days, by watch time
 
-Media server users that no subscription has are marked **No subscription**,
-which makes left-over or unpaid accounts easy to spot. The overview is kept
-for a minute. If Silo or Tracearr can't be reached, the other is still shown,
-with the reason on top. Silo's part needs a key with full access or
-`admin:monitor:read`.
+A play counts once 2 minutes are watched (Tracearr's rule); shorter plays add
+to the watch time only. Media server users that no subscription has are
+marked **No subscription**, which makes left-over or unpaid accounts easy to
+spot. The overview is kept for a minute. If Silo or Tracearr can't be reached,
+the rest is still shown, with the reason on top. Silo's part needs a key with
+full access or `admin:monitor:read`; the number of Silo users needs full
+access, and shows "–" without it.
 
 ![The stats overview](screenshots/overview.png)
 
@@ -180,6 +200,7 @@ Paymenter and Laravel in `tests/shims.php`. GitHub runs them on every push.
 | `extensions/Others/PaywarrStats/TracearrClient.php` | The calls to Tracearr |
 | `extensions/Others/PaywarrStats/SiloClient.php` | The calls to Silo |
 | `extensions/Others/PaywarrStats/AdminOverview.php` | The staff overview: gathers Silo and Tracearr, linked to customers |
+| `extensions/Others/PaywarrStats/BusinessOverview.php` | The staff overview's business part, from Paymenter's subscriptions and invoices |
 | `extensions/Others/PaywarrStats/routes.php` | `/stats`, `/stats/admin` and their posters |
 | `extensions/Others/PaywarrStats/lang/da.json` | Danish |
 | `install.sh` | Copies the extension into Paymenter |

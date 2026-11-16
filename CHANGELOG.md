@@ -3,6 +3,25 @@
 What changed in each version of Paywarr Stats. Each section is also the text
 of its release on GitHub (`.github/release-notes.sh` puts it there).
 
+## 1.7.0 (2026-11-16)
+
+- **New in the Stats overview: your business.** Monthly revenue (in total and
+  per product), paying customers, trials running and how many became paying,
+  unpaid invoices, subscriptions per server, new and cancelled subscriptions
+  over 30 days, renewals in the next 7 days, paying customers who watch
+  nothing, Discord, and requests used (requests need Paywarr 1.23).
+- **New: media servers**, with users, customers, streams, plays and watch time
+  each, online or not, and "History only" for a server whose history was
+  imported into Tracearr.
+- **Who watched what:** Most watched shows who watched each title and on
+  which server; Plays per day is coloured per server; Most active lists
+  everyone, not only customers.
+- **Fixed:** Watch time showed 0 when the plays came from users without a
+  subscription. It now counts everyone, as Plays does.
+- Tracearr is asked once for the history of the last 30 days instead of top
+  lists, activity and a call per customer. A play counts once 2 minutes are
+  watched, as in Tracearr.
+
 ## 1.6.0 (2026-11-15)
 
 - **My stats in the top bar** too, next to Home and Shop (in the menu on a
