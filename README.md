@@ -74,139 +74,14 @@ cd /opt/paywarr-stats && git pull && bash install.sh /opt/paymenter
 What changed in each version is on the
 [Releases](https://github.com/Lolles1911/Paywarr-stats/releases) page.
 
-## Stats overview for staff
+## Documentation
 
-Paymenter staff (anyone whose role may view services, `admin.services.view`)
-also get **Stats overview** in the menu, at `/stats/admin`. Customers never see
-it; for them the address doesn't exist.
-
-**Your business**, from Paymenter (Paywarr's subscriptions):
-
-- **Monthly revenue** of the active paid subscriptions (yearly plans / 12 and
-  so on), per currency, and **per product**
-- **Paying customers**, **trials running** and the share of finished trials
-  that became paying, **unpaid invoices** and how many are overdue
-- **Subscriptions per server**: active, trials, suspended, pending, cancelled
-- **Last 30 days**: new subscriptions, new trials, cancelled, and who renews in
-  the next 7 days
-- **Customers**: paying but nothing watched in 30 days, Discord connected, who
-  left the Discord, and requests used, with who has used their limit up
-  (requests need Paywarr 1.23 or newer, and are kept for 10 minutes)
-
-**Everyone on your servers**, from Silo and Tracearr together, customers or not:
-
-- **Media servers**: users, customers, streaming now, plays and watch time per
-  server, online or not; "History only" for a server whose history was
-  imported into Tracearr without a live connection
-- **Streaming now:** who, as the Paymenter customer with their subscription,
-  status and paid-until date; what, on which device and server, played
-  directly or converted, how far
-- **Plays per day** over the last 30 days, coloured per server
-- **Most watched** titles of the last 30 days, with posters, who watched them
-  and on which server
-- **Most active** users of the last 30 days, by watch time
-
-A play counts once 2 minutes are watched (Tracearr's rule); shorter plays add
-to the watch time only. Media server users that no subscription has are
-marked **No subscription**, which makes left-over or unpaid accounts easy to
-spot. The overview is kept for a minute. If Silo or Tracearr can't be reached,
-the rest is still shown, with the reason on top. Silo's part needs a key with
-full access or `admin:monitor:read`; the number of Silo users needs full
-access, and shows "–" without it.
-
-![The stats overview](screenshots/overview.png)
-
-## How it works
-
-- **Silo** customers' numbers come from Silo itself: totals from its watch
-  summary, everything else from their latest 200 plays, with posters, genres
-  and the size of each show from Silo's catalog. Silo keeps totals for a year
-  at most, so for a customer only on Silo the big number is **the last 12
-  months** (and says so). Silo is not at 1.0 yet and this has been tested
-  against its published API contract, not yet on a real Silo server.
-- **Plex** is supported, but less tested than Jellyfin and Emby. Customers are
-  found by username, and Wizarr records a Plex user's display name, which
-  usually is the same as the Plex username but can differ; such a customer
-  sees "Nothing watched yet". Feedback is very welcome.
-- **Only the customer's own numbers.** Paywarr records each customer's media
-  server users on their subscriptions. Paywarr Stats finds those users in
-  Tracearr (same server type and username, accounts not removed) and asks
-  Tracearr about them only; on Silo it asks about the customer's own account
-  ID, and drops any play that belongs to someone else. Nobody sees anyone
-  else's numbers, and neither is asked about another customer.
-- **Fast pages.** The numbers are kept for 10 minutes per customer, so page
-  views don't load Tracearr or Silo. "Nothing watched yet" is kept for only a
-  minute, so a new customer's first play shows up soon.
-- **Posters** come from Tracearr's image proxy or Silo's catalog, fetched by
-  Paymenter and passed on, so both can stay on your own network. Silo's key is
-  only sent to Silo itself, never to an object storage address. The page only asks for poster
-  number 1, 2, 3 … of the customer's own list, never for an address, so it
-  can't be used to fetch anything else; only real images are passed on (no
-  SVG). Throttled to 120 a minute per customer.
-- **Patterns** (weekdays, time of day, devices, streaks) come from the
-  customer's latest 200 plays per media server user, in Paymenter's time zone.
-- **A show on two servers** (Jellyfin and Emby) is shown once, with the
-  progress of the server where the customer got furthest.
-- **Tracearr down or a wrong key:** the customer sees "Your statistics can't
-  be loaded right now", and the reason is in Paymenter's log.
-- **History:** Tracearr can import plays from before it was installed (e.g.
-  from Jellyfin's Playback Reporting plugin or Tautulli); they show up here too.
-- **Languages:** English, and Danish when Paymenter is set to Danish. Add a
-  language by copying `extensions/Others/PaywarrStats/lang/da.json`.
-
-Not shown (yet): favourites. Tracearr records plays, not favourites.
-
-## Troubleshooting
-
-**Check one customer**, step by step: the settings, the media server users
-Paywarr noted on their subscriptions, what Tracearr and Silo know about them,
-and what the page will show. It only reads, and makes the customer's next visit
-ask afresh:
-
-```bash
-su -s /bin/bash www-data -c "php /opt/paywarr-stats/tools/stats-check.php /opt/paymenter customer@example.com"
-```
-
-Errors are in Paymenter's log:
-
-```bash
-grep -h "Paywarr Stats" /opt/paymenter/storage/logs/laravel-$(date +%F).log | tail -5
-```
-
-| Message | Fix |
+| | |
 |---|---|
-| `Tracearr rejected the API key` | Make a new key in Tracearr (Settings → Data & API → API) and paste it again |
-| `Could not reach Tracearr at …` | Check the internal URL: IP and port, reachable from the Paymenter machine |
-| `Silo rejected the API key` / `Could not reach Silo at …` | The same for Silo: a key from Admin → API Keys, and Silo's own port (not 8096) |
-| `Silo refused … (403)` | The key must belong to an admin account, with full access or `admin:monitor:read` |
-| No posters or genres for Silo customers | The key has only `admin:monitor:read`, or your admin account's main profile has a PIN; posters need full access and a profile without PIN |
-| "Nothing watched yet" for someone who has watched | Their username in Tracearr differs from the one Paywarr recorded, or the account is removed in Tracearr |
-
-## Tests
-
-```bash
-tests/run.sh      # requires php 8.3+, python3, curl
-```
-
-The scenarios run the extension against `tests/tracearr_stub.py`, written from
-Tracearr's source (public API v2 and the image proxy) and Silo's API contract, with small stand-ins for
-Paymenter and Laravel in `tests/shims.php`. GitHub runs them on every push.
-
-## Files
-
-| File | Contents |
-|---|---|
-| `extensions/Others/PaywarrStats/PaywarrStats.php` | The extension: settings, menu item, page, posters |
-| `extensions/Others/PaywarrStats/TracearrClient.php` | The calls to Tracearr |
-| `extensions/Others/PaywarrStats/SiloClient.php` | The calls to Silo |
-| `extensions/Others/PaywarrStats/AdminOverview.php` | The staff overview: gathers Silo and Tracearr, linked to customers |
-| `extensions/Others/PaywarrStats/BusinessOverview.php` | The staff overview's business part, from Paymenter's subscriptions and invoices |
-| `extensions/Others/PaywarrStats/routes.php` | `/stats`, `/stats/admin` and their posters |
-| `extensions/Others/PaywarrStats/lang/da.json` | Danish |
-| `install.sh` | Copies the extension into Paymenter |
-| `tools/stats-check.php` | Checks My stats for one customer, step by step |
-| `tests/` | Tracearr and Silo stub, stand-ins and scenarios |
-| `assets/` | Banner and the picture GitHub shows when the project is shared |
+| [Stats overview and reminders](docs/overview.md) | The staff overview (business, servers, who watches what), and reminding customers who watch nothing |
+| [How it works](docs/how-it-works.md) | Where the numbers come from, and troubleshooting |
+| [Tests and files](docs/development.md) | Running the tests, and what each file does |
+| [CHANGELOG](CHANGELOG.md) | What changed in each version |
 
 ## License
 
