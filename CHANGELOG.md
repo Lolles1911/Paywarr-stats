@@ -3,6 +3,13 @@
 What changed in each version of Paywarr Stats. Each section is also the text
 of its release on GitHub (`.github/release-notes.sh` puts it there).
 
+## 1.8.0 (2026-11-20)
+
+- **New: "We miss you".** Customers who watched nothing for a number of days
+  (setting "Remind customers who watched nothing for (days)") get a friendly
+  reminder by mail and Discord, at most once a month. Needs Paywarr 1.25.
+- The README is short; the rest is in `docs/`.
+
 ## 1.7.1 (2026-11-20)
 
 - Trial days given in Paywarr's admin (Paywarr 1.24) count as a trial in the
