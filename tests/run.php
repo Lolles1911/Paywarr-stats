@@ -782,6 +782,37 @@ test('business: the page shows it, in Danish too, and rows are read from Payment
     ok(!str_contains($stats->adminHtml($overview), 'Monthly revenue'), 'without it, the rest still shows');
 });
 
+test('remind inactive: paying customers who watched nothing for N days, once a month; new ones, trials and unknowns left alone', function () {
+    overviewFixture();
+    $stats = overviewStats(['remind_inactive_days' => '14']);
+    $now = time();
+    $old = date('Y-m-d H:i:s', $now - 60 * 86400);
+    $make = function (int $id, string $email, array $props, array $settings = [], ?string $created = null) use ($old) {
+        return (object) ['id' => $id, 'status' => 'active', 'created_at' => $created ?? $old, 'user' => new class($email) {
+            public array $props = [];
+            public array $properties = [];   // Eloquent's loaded relation, as propertiesOf() reads it
+            public function __construct(public string $email) {}
+            public function properties() { $self = $this; return new class($self) {
+                public function __construct(private $user) {}
+                public function updateOrCreate($match, $values) { $this->user->props[$match['key']] = $values['value']; $this->user->properties = $this->user->props; }
+                public function pluck($v, $k) { return $this->user->props; }
+            }; }
+        }, 'product' => (object) ['name' => 'Jellyfin Plus', 'settings' => $settings, 'server' => (object) ['extension' => 'Wizarr']], 'properties' => new \App\Models\PropertyList($props)];
+    };
+    $ole = $make(1, 'ole@example.com', ['wizarr_users:1' => '3:ole:jellyfin']);            // watched in the fixture's history
+    $nobody = $make(2, 'nobody@example.com', ['wizarr_users:1' => '8:nobody:jellyfin']);    // nothing
+    $fresh = $make(3, 'fresh@example.com', ['wizarr_users:1' => '9:fresh:jellyfin'], [], date('Y-m-d H:i:s', $now - 86400));
+    $trial = $make(4, 'trial@example.com', ['wizarr_users:1' => '10:t:jellyfin'], ['trial_days' => '7']);
+    $silo = $make(5, 'mette@example.com', ['wizarr_users:1' => '7:mette:silo']);             // Silo says: plays
+    $sent = [];
+    $notify = function ($service, $title, $text, $button) use (&$sent) { $sent[] = [$service->id, $title, $text]; return true; };
+    same([2], $stats->remindInactive([$ole, $nobody, $fresh, $trial], $now, $notify), 'only the one who watched nothing');
+    same('We miss you', $sent[0][1], 'title');
+    ok(str_contains($sent[0][2], '14 days'), 'how long');
+    same([], $stats->remindInactive([$nobody], $now + 86400, $notify), 'not again within a month');
+    same([], overviewStats()->remindInactive([$nobody], $now, $notify), 'off without the setting');
+});
+
 /* ---------- summary ---------- */
 
 echo "\n" . $results['pass'] . ' passed, ' . count($results['fail']) . " failed\n";

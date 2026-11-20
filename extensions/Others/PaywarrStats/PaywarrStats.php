@@ -5,6 +5,7 @@ namespace Paymenter\Extensions\Others\PaywarrStats;
 use App\Attributes\ExtensionMeta;
 use App\Classes\Extension\Extension;
 use App\Models\Service;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
@@ -76,11 +77,30 @@ class PaywarrStats extends Extension
                 'encrypted' => true,
                 'description' => 'Silo -> Admin -> API Keys (starts with "sa_"). Full access gives posters and genres; a key with only admin:monitor:read gives the rest. The Paywarr key can be reused.',
             ],
+            [
+                'name' => 'remind_inactive_days',
+                'label' => 'Remind customers who watched nothing for (days)',
+                'type' => 'number',
+                'required' => false,
+                'validation' => 'nullable|integer|min:3|max:90',
+                'description' => 'E.g. 14. A paying customer who hasn\'t watched anything for that long gets a friendly mail, and a private Discord message if they connected Discord (sent through Paywarr 1.25 or newer). At most once a month per customer; checked daily. Empty: off.',
+            ],
         ];
     }
 
     public function boot()
     {
+        // Daily: customers who watch nothing are reminded (when switched on).
+        $register = function (Schedule $schedule) {
+            $schedule->call(fn () => $this->remindInactive())->dailyAt('11:17')->name('paywarr-stats-remind-inactive')->withoutOverlapping();
+        };
+        if (function_exists('app') && method_exists(app(), 'afterResolving')) {
+            app()->afterResolving(Schedule::class, $register);
+            if (app()->resolved(Schedule::class)) {
+                $register(app()->make(Schedule::class));
+            }
+        }
+
         require __DIR__ . '/routes.php';
 
         Event::listen('navigation.dashboard', fn () => [
@@ -360,6 +380,114 @@ class PaywarrStats extends Extension
         }
 
         return $index;
+    }
+
+    /**
+     * Daily: paying customers who watched nothing for "remind_inactive_days"
+     * days get a reminder through Paywarr (mail, and Discord when connected),
+     * at most once a month. New customers (younger than that) are left alone,
+     * and so is anyone when Tracearr or Silo can't tell.
+     *
+     * @param  callable|null  $notify  for tests: fn (Service, string $title, string $text, array $button)
+     * @return int[] the services reminded
+     */
+    public function remindInactive(?iterable $services = null, ?int $now = null, ?callable $notify = null): array
+    {
+        $days = (int) ($this->config('remind_inactive_days') ?? 0);
+        if ($days < 3) {
+            return [];
+        }
+        $now ??= time();
+        $since = $now - $days * 86400;
+        $paywarr = 'Paymenter\\Extensions\\Servers\\Wizarr\\Wizarr';
+        $notify ??= function (Service $service, string $title, string $text, array $button) use ($paywarr) {
+            if (!class_exists($paywarr) || !method_exists($paywarr, 'notifyCustomer')) {
+                return false;
+            }
+
+            return (new $paywarr([]))->forService($service)->notifyCustomer($service, $title, $text, $button) !== [];
+        };
+        $services ??= Service::with(['properties', 'product.server', 'product.settings', 'user.properties'])->whereIn('status', ['active'])->get();
+
+        // Who watched since then: Tracearr by name, Silo per account.
+        $watched = null;
+        if ($this->configured('tracearr')) {
+            try {
+                $watched = [];
+                foreach ($this->client()->history($since) as $play) {
+                    $watched[strtolower((string) ($play['server_type'] ?? '')) . '|' . strtolower((string) ($play['user']['username'] ?? ''))] = true;
+                }
+            } catch (Throwable $e) {
+                Log::warning('Paywarr Stats: no inactivity reminders today, Tracearr did not answer: ' . $e->getMessage());
+
+                return [];
+            }
+        }
+
+        $reminded = [];
+        foreach ($services as $service) {
+            if (($service->status ?? '') !== 'active' || ($service->product?->server?->extension ?? null) !== 'Wizarr') {
+                continue;
+            }
+            $settings = $this->settingsArray($service->product->settings ?? []);
+            $props = $this->propertiesOf($service);
+            if ((int) ($settings['trial_days'] ?? 0) > 0 || (int) ($props['trial_days_given'] ?? 0) > 0 || (int) ($settings['gift_months'] ?? 0) > 0 || (int) ($settings['extra_requests'] ?? 0) > 0) {
+                continue; // trials, gift cards and top-ups
+            }
+            $created = $service->created_at ? strtotime((string) $service->created_at) : null;
+            if ($created !== null && $created > $since) {
+                continue; // too new to have missed anything
+            }
+            $accounts = $this->mediaAccounts([$props]);
+            if (!$accounts) {
+                continue; // no user yet: Paywarr's own reminder covers that
+            }
+            $active = false;
+            $unknown = false;
+            foreach ($accounts as $account) {
+                if ($account['type'] === 'silo') {
+                    if (!$this->configured('silo')) {
+                        $unknown = true;
+
+                        continue;
+                    }
+                    try {
+                        $summary = $this->silo()->watchSummary((string) $account['id'], $days);
+                        $active = $active || (int) ($summary['plays'] ?? 0) > 0;
+                    } catch (Throwable $e) {
+                        $unknown = true;
+                    }
+                } elseif ($watched === null) {
+                    $unknown = true;
+                } else {
+                    $active = $active || isset($watched[$account['type'] . '|' . strtolower($account['username'])]);
+                }
+            }
+            $user = $service->user;
+            $last = (int) ($this->propertiesOf($user)['paywarr_stats_reminded'] ?? 0);
+            if ($active || $unknown || !$user || $now - $last < 30 * 86400) {
+                continue;
+            }
+            $product = (string) ($service->product->name ?? '');
+            $sent = $notify($service, self::t('We miss you'),
+                self::t('You haven\'t watched anything on :product for :days days. Is something not working? Tell us with "Report a problem" or write to us. And there is plenty new to watch.', ['product' => $product, 'days' => $days]),
+                [self::t('Open My stats'), $this->statsUrl()]);
+            if ($sent) {
+                $user->properties()->updateOrCreate(['key' => 'paywarr_stats_reminded'], ['name' => 'Paywarr Stats: reminded (watched nothing)', 'value' => (string) $now]);
+                $reminded[] = (int) $service->id;
+            }
+        }
+
+        return $reminded;
+    }
+
+    private function statsUrl(): string
+    {
+        try {
+            return route('extensions.paywarr-stats');
+        } catch (Throwable $e) {
+            return '/stats';
+        }
     }
 
     /** GET /stats */
