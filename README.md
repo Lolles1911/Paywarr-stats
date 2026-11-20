@@ -23,6 +23,12 @@ Stats shows each customer their own part of it:
 - What they watched recently, with posters: each show or movie once, with
   episode, date and how much of it
 
+For you, in Paymenter's admin: a **Stats overview** of everyone together, and
+pages **per customer** (what they watch, when, on which apps and devices,
+what they paid, requests, Discord and tickets), **per media server**, and
+**rankings and trends** (who watches less than before and may be about to
+stop). See [the admin pages](docs/overview.md).
+
 Customers log in to Paymenter as usual, Discord included through
 [Paywarr](https://github.com/Lolles1911/Paywarr), and need no Tracearr or Silo
 admin account.
@@ -78,7 +84,7 @@ What changed in each version is on the
 
 | | |
 |---|---|
-| [Stats overview and reminders](docs/overview.md) | The staff overview (business, servers, who watches what), and reminding customers who watch nothing |
+| [Stats overview, admin pages and reminders](docs/overview.md) | The staff overview, the admin pages per customer, per server and trends, and reminding customers who watch nothing |
 | [How it works](docs/how-it-works.md) | Where the numbers come from, and troubleshooting |
 | [Tests and files](docs/development.md) | Running the tests, and what each file does |
 | [CHANGELOG](CHANGELOG.md) | What changed in each version |

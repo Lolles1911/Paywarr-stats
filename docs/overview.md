@@ -1,4 +1,35 @@
-# Stats overview and reminders
+# Stats overview, admin pages and reminders
+
+## Admin pages
+
+In Paymenter's admin, under **Paywarr Stats** (and in the **Paywarr** group
+too), for staff who may view services:
+
+- **Viewing per customer:** one row per customer (everyone with a Paywarr
+  subscription): subscription and media servers, status, plays and watch time
+  over the last 30 days, "Than before" (watch time against the 30 days before),
+  last watched, the app they mostly use and on how many devices, paid in total,
+  unpaid invoices, requests and tickets. Search, sort, and filter on status,
+  media server, "Nothing in 14 days", "Half or less than before", "More than
+  before" and "With unpaid invoices". Click a customer for their card: viewing,
+  when they watch (per hour and weekday), most watched titles, apps and devices
+  (with how often the server had to transcode), the latest plays, money
+  (invoices), requests, Discord and tickets. "Manage in Paywarr" opens the
+  same customer under Paywarr → Customers.
+- **Viewing per server:** a tab per media server, last 30 days: viewers (and how
+  many are customers), plays, watch time, the most streams at the same time,
+  share transcoded, busiest hours and weekdays, who watches most, most watched
+  titles, and apps.
+- **Rankings and trends:** paying customers who watched an hour or more in the
+  30 days before and half or less in the last 30 (they may be about to stop),
+  top viewers, who watches more, plays and viewers per week over 8 weeks, and
+  new and cancelled subscriptions per month over a year.
+
+They read the last 60 days of plays from Tracearr (with app, device, platform
+and whether it was transcoded) and from Silo (with Silo's app name), and
+Paymenter's subscriptions, invoices and tickets. That is kept for 10 minutes;
+**Refresh** fetches it again. A play counts once 2 minutes are watched.
+
 
 ## Stats overview for staff
 

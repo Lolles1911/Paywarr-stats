@@ -3,6 +3,26 @@
 What changed in each version of Paywarr Stats. Each section is also the text
 of its release on GitHub (`.github/release-notes.sh` puts it there).
 
+## 1.9.0 (2026-11-20)
+
+- **New: three admin pages**, in a "Paywarr Stats" group and in Paywarr's group
+  too (with the Stats overview linked from the first):
+  - **Viewing per customer:** one row per customer with subscription, status,
+    plays and watch time over 30 days and against the 30 days before, last
+    watched, the app they mostly use, paid in total, unpaid invoices, requests
+    and tickets. Search, sort and filter (nothing in 14 days, watching half or
+    less, more, unpaid). Click a customer for their card: when they watch
+    (hours and weekdays), most watched, apps and devices with how often the
+    server transcoded, latest plays, invoices, requests, Discord and tickets.
+  - **Viewing per server:** a tab per media server with viewers, plays, watch
+    time, the most streams at once, share transcoded, busiest hours and
+    weekdays, who watches most, most watched titles and apps.
+  - **Rankings and trends:** paying customers watching half or less than
+    before (they may be about to stop), top viewers, who watches more, plays
+    and viewers per week, and new and cancelled subscriptions per month.
+- The numbers are the last 60 days of plays from Tracearr and Silo, kept for
+  10 minutes ("Refresh" fetches them again).
+
 ## 1.8.0 (2026-11-20)
 
 - **New: "We miss you".** Customers who watched nothing for a number of days

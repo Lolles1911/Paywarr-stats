@@ -19,6 +19,10 @@ Paymenter and Laravel in `tests/shims.php`. GitHub runs them on every push.
 | `extensions/Others/PaywarrStats/SiloClient.php` | The calls to Silo |
 | `extensions/Others/PaywarrStats/AdminOverview.php` | The staff overview: gathers Silo and Tracearr, linked to customers |
 | `extensions/Others/PaywarrStats/BusinessOverview.php` | The staff overview's business part, from Paymenter's subscriptions and invoices |
+| `extensions/Others/PaywarrStats/PeopleStats.php` | The admin pages' numbers: per customer, per server, trends |
+| `extensions/Others/PaywarrStats/Concerns/People.php` | Gathers 60 days of plays from Tracearr and Silo and Paymenter's side of each customer |
+| `extensions/Others/PaywarrStats/Admin/Pages/` | The admin pages: Viewing per customer, Viewing per server, Rankings and trends |
+| `extensions/Others/PaywarrStats/Admin/StatsPage.php` | What the admin pages share: both menu groups, Refresh, bars and lists |
 | `extensions/Others/PaywarrStats/routes.php` | `/stats`, `/stats/admin` and their posters |
 | `extensions/Others/PaywarrStats/lang/da.json` | Danish |
 | `install.sh` | Copies the extension into Paymenter |
