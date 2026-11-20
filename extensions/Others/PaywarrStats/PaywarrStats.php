@@ -226,7 +226,8 @@ class PaywarrStats extends Extension
                 'created_at' => $time($service->created_at ?? null),
                 'cancelled_at' => $time($service->cancellation->created_at ?? null) ?? $time($service->updated_at ?? null),
                 'expires_at' => $time($service->expires_at ?? null),
-                'trial' => (int) ($settings['trial_days'] ?? 0) > 0,
+                // A trial product, or trial days given in admin (Paywarr 1.24: Paywarr → Customers).
+                'trial' => (int) ($settings['trial_days'] ?? 0) > 0 || (int) ($props['trial_days_given'] ?? 0) > 0,
                 'trial_ended' => !empty($props['trial_ended_at']),
                 'trial_converted' => !empty($props['trial_converted_to']),
                 'name' => trim(($user->first_name ?? '') . ' ' . ($user->last_name ?? '')) ?: (string) ($user->email ?? '?'),

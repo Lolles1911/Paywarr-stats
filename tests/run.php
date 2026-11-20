@@ -756,6 +756,15 @@ test('business: paying customers who watch nothing, Discord and requests', funct
     same(null, business([sub()])['requests'], 'unknown without Paywarr 1.23');
 });
 
+test('business: trial days given in admin count as a trial', function () {
+    $stats = overviewStats();
+    $service = (object) ['id' => 9, 'status' => 'active', 'price' => 0, 'quantity' => 1, 'currency_code' => 'DKK', 'created_at' => null, 'updated_at' => null, 'expires_at' => null,
+        'user' => (object) ['first_name' => 'Fie', 'last_name' => '', 'email' => 'fie@example.com', 'properties' => []],
+        'product' => (object) ['name' => 'Jellyfin Plus', 'settings' => [], 'server' => (object) ['extension' => 'Wizarr', 'name' => 'Jellyfin']],
+        'properties' => new \App\Models\PropertyList(['trial_days_given' => '7'])];
+    same([true], array_column($stats->businessRows([$service]), 'trial'), 'a trial');
+});
+
 test('business: the page shows it, in Danish too, and rows are read from Paymenter\'s subscriptions', function () {
     overviewFixture();
     $stats = overviewStats();
