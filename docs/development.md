@@ -26,4 +26,4 @@ Paymenter and Laravel in `tests/shims.php`. GitHub runs them on every push.
 | `tests/` | Tracearr and Silo stub, stand-ins and scenarios |
 | `assets/` | Banner and the picture GitHub shows when the project is shared |
 
-[← Paywarr](../README.md)
+[← Paywarr Stats](../README.md)

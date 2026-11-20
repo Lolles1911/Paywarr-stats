@@ -68,4 +68,4 @@ grep -h "Paywarr Stats" /opt/paymenter/storage/logs/laravel-$(date +%F).log | ta
 | No posters or genres for Silo customers | The key has only `admin:monitor:read`, or your admin account's main profile has a PIN; posters need full access and a profile without PIN |
 | "Nothing watched yet" for someone who has watched | Their username in Tracearr differs from the one Paywarr recorded, or the account is removed in Tracearr |
 
-[← Paywarr](../README.md)
+[← Paywarr Stats](../README.md)

@@ -54,4 +54,4 @@ Left alone: customers newer than that many days, trials, gift cards, top-ups,
 customers without a user yet (Paywarr reminds those itself), and anyone when
 Tracearr or Silo doesn't answer, so nobody gets a reminder by mistake.
 
-[← Paywarr](../README.md)
+[← Paywarr Stats](../README.md)
