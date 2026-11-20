@@ -3,6 +3,11 @@
 What changed in each version of Paywarr Stats. Each section is also the text
 of its release on GitHub (`.github/release-notes.sh` puts it there).
 
+## 1.7.1 (2026-11-20)
+
+- Trial days given in Paywarr's admin (Paywarr 1.24) count as a trial in the
+  business part of the Stats overview.
+
 ## 1.7.0 (2026-11-16)
 
 - **New in the Stats overview: your business.** Monthly revenue (in total and
