@@ -36,7 +36,7 @@ trait StatsPage
             ->key(static::class . '@paywarr')
             ->group('Paywarr')
             ->icon(static::getNavigationIcon())
-            ->activeWhen(fn (): bool => request()->routeIs($route))
+            ->isActiveWhen(fn (): bool => request()->routeIs($route))
             ->sort(50 + (int) static::getNavigationSort())
             ->url(static::getNavigationUrl());
 

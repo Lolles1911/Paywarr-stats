@@ -3,6 +3,12 @@
 What changed in each version of Paywarr Stats. Each section is also the text
 of its release on GitHub (`.github/release-notes.sh` puts it there).
 
+## 1.9.1 (2026-11-20)
+
+- **Fixed:** with 1.9.0, Paymenter's admin answered "Server Error" on Paymenter
+  versions with an older Filament (such as Paymenter 1.5.9): the admin pages'
+  second menu entry used a call those versions don't have.
+
 ## 1.9.0 (2026-11-20)
 
 - **New: three admin pages**, in a "Paywarr Stats" group and in Paywarr's group
