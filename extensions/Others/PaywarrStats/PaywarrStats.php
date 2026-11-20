@@ -29,6 +29,8 @@ use Throwable;
 )]
 class PaywarrStats extends Extension
 {
+    use Concerns\People;
+
     /** Numbers are kept this long per customer, so page views do not hit Tracearr. */
     private const CACHE_SECONDS = 600;
 

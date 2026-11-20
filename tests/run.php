@@ -10,6 +10,8 @@ require __DIR__ . '/../extensions/Others/PaywarrStats/TracearrClient.php';
 require __DIR__ . '/../extensions/Others/PaywarrStats/SiloClient.php';
 require __DIR__ . '/../extensions/Others/PaywarrStats/AdminOverview.php';
 require __DIR__ . '/../extensions/Others/PaywarrStats/BusinessOverview.php';
+require __DIR__ . '/../extensions/Others/PaywarrStats/PeopleStats.php';
+require __DIR__ . '/../extensions/Others/PaywarrStats/Concerns/People.php';
 require __DIR__ . '/../extensions/Others/PaywarrStats/PaywarrStats.php';
 
 use Paymenter\Extensions\Others\PaywarrStats\PaywarrStats;
@@ -811,6 +813,118 @@ test('remind inactive: paying customers who watched nothing for N days, once a m
     ok(str_contains($sent[0][2], '14 days'), 'how long');
     same([], $stats->remindInactive([$nobody], $now + 86400, $notify), 'not again within a month');
     same([], overviewStats()->remindInactive([$nobody], $now, $notify), 'off without the setting');
+});
+
+/* ---------- admin pages: per customer, per server, trends ---------- */
+
+/** A play as PeopleStats reads it. */
+function aPlay($who, string $server, string $title, int $minutes, int $daysAgo, array $extra = []): array
+{
+    $started = time() - $daysAgo * 86400 - 7200;
+
+    return $extra + ['who' => $who, 'username' => 'u' . $who, 'server' => $server, 'server_type' => 'jellyfin', 'title' => $title, 'episode' => null,
+        'type' => 'movie', 'ms' => $minutes * 60000, 'started' => $started, 'stopped' => $started + $minutes * 60, 'watched' => false,
+        'app' => 'Jellyfin Web', 'device' => 'Firefox', 'platform' => 'Linux', 'transcode' => false, 'genres' => ['Drama']];
+}
+
+function aCustomer(int $id, string $name, array $extra = []): array
+{
+    return $extra + ['id' => $id, 'name' => $name, 'email' => strtolower($name) . '@example.com', 'discord' => null, 'since' => time() - 90 * 86400,
+        'products' => ['Jellyfin Plus'], 'status' => 'active', 'trial' => false, 'servers' => ['Jellyfin'], 'paid_total' => 30.0, 'paid_count' => 3,
+        'unpaid' => 0, 'unpaid_total' => 0.0, 'currency' => 'USD', 'requests' => null, 'tickets' => 0, 'open_tickets' => 0, 'invoices' => [], 'ticket_list' => []];
+}
+
+test('customers: plays, watch time and the trend against the 30 days before; short plays don\'t count', function () {
+    $people = new \Paymenter\Extensions\Others\PaywarrStats\PeopleStats([
+        aPlay(1, 'Jellyfin', 'Now A', 60, 2), aPlay(1, 'Jellyfin', 'Now B', 30, 10, ['app' => 'Jellyfin Android TV', 'device' => 'Shield']),
+        aPlay(1, 'Jellyfin', 'Now C', 30, 12, ['app' => 'Jellyfin Android TV', 'device' => 'Shield']),
+        aPlay(1, 'Jellyfin', 'Before', 240, 40), aPlay(1, 'Jellyfin', 'Clip', 1, 1),
+        aPlay(2, 'Jellyfin', 'Old', 60, 50), aPlay(null, 'Jellyfin', 'Stranger', 60, 3),
+    ], [aCustomer(1, 'Ole'), aCustomer(2, 'Idle'), aCustomer(3, 'Never')], time());
+    $rows = $people->customerRows();
+    same([3, 120 * 60000, 1, 240 * 60000, -50], [$rows[1]['plays_30'], $rows[1]['ms_30'], $rows[1]['plays_before'], $rows[1]['ms_before'], $rows[1]['trend']], 'Ole: 3 plays now (the 1-minute clip left out), half of before');
+    same(['Jellyfin Android TV', 2], [$rows[1]['app'], $rows[1]['devices']], 'mostly in the TV app, on two devices');
+    same([0, -100, null], [$rows[2]['plays_30'], $rows[2]['trend'], $rows[3]['trend']], 'Idle stopped; Never has nothing to compare');
+    same(3, count($rows), 'only customers, not the stranger');
+});
+
+test('customer card: when, what, apps and devices, latest plays', function () {
+    $people = new \Paymenter\Extensions\Others\PaywarrStats\PeopleStats([
+        aPlay(1, 'Jellyfin', 'The Show', 40, 1, ['type' => 'episode', 'episode' => 'S01E02 · Two', 'transcode' => true, 'app' => 'Infuse', 'device' => 'Apple TV', 'platform' => 'tvOS']),
+        aPlay(1, 'Jellyfin', 'The Show', 40, 2, ['type' => 'episode', 'episode' => 'S01E01 · One', 'app' => 'Infuse', 'device' => 'Apple TV', 'platform' => 'tvOS']),
+        aPlay(1, 'Silo', 'A Film', 100, 3, ['server_type' => 'silo', 'app' => 'Silo for Apple TV', 'device' => '', 'platform' => 'tvOS', 'transcode' => null, 'watched' => true, 'genres' => ['Comedy']]),
+    ], [aCustomer(1, 'Ole', ['discord' => 'ole#1', 'requests' => ['used' => 2, 'limit' => 5, 'unlimited' => false]])], time());
+    $card = $people->customer(1);
+    same([1, 2], [$card['movies'], $card['episodes']], 'a movie and two episodes');
+    same([['The Show', 2], ['A Film', 1]], array_map(fn ($t) => [$t['title'], $t['plays']], $card['titles']), 'a show counts its episodes together');
+    same([['Infuse', 'Apple TV', 2, 50], ['Silo for Apple TV', '', 1, null]], array_map(fn ($a) => [$a['app'], $a['device'], $a['plays'], $a['transcode_share']], $card['apps']), 'apps with devices and how often converted');
+    same(3, array_sum($card['hours']), 'every play in an hour of the day');
+    same(['S01E02 · Two', 'S01E01 · One', null], array_column($card['recent'], 'episode'), 'latest first');
+    same(['ole#1', 2], [$card['discord'], $card['requests']['used']], 'Discord and requests from Paymenter\'s side');
+    same(null, $people->customer(99), 'no such customer');
+});
+
+test('servers: viewers, busiest hours, apps, converted streams and most at once', function () {
+    $now = time();
+    $at = $now - 3 * 86400;
+    $p = fn ($who, $start, $minutes, $extra = []) => ['started' => $start, 'stopped' => $start + $minutes * 60] + aPlay($who, 'Jellyfin', 'Film ' . $who, $minutes, 0, $extra);
+    $people = new \Paymenter\Extensions\Others\PaywarrStats\PeopleStats([
+        $p(1, $at, 60), $p(2, $at + 600, 60, ['transcode' => true]), $p(null, $at + 1200, 60, ['username' => 'grandma']), $p(1, $at + 3600, 30),
+        aPlay(3, 'Plex', 'Elsewhere', 30, 4, ['server_type' => 'plex']),
+    ], [aCustomer(1, 'Ole'), aCustomer(2, 'Two'), aCustomer(3, 'Three')], $now);
+    $servers = $people->servers();
+    same(['Jellyfin', 'Plex'], array_keys($servers), 'most plays first');
+    same([3, 2, 4, 25], [$servers['Jellyfin']['viewers'], $servers['Jellyfin']['customers'], $servers['Jellyfin']['plays'], $servers['Jellyfin']['transcode_share']], 'viewers, of whom customers, plays, converted');
+    same(3, $servers['Jellyfin']['peak']['streams'], 'three at once (back to back does not count)');
+    same('grandma', array_values(array_filter($servers['Jellyfin']['top_viewers'], fn ($v) => !$v['customer']))[0]['name'] ?? null, 'a user without a customer shown by name');
+});
+
+test('trends: watching less, top viewers, weeks and new and cancelled per month', function () {
+    $now = time();
+    $people = new \Paymenter\Extensions\Others\PaywarrStats\PeopleStats([
+        aPlay(1, 'Jellyfin', 'A', 300, 40), aPlay(1, 'Jellyfin', 'B', 30, 5),        // Ole: 5 h before, 30 min now
+        aPlay(2, 'Jellyfin', 'C', 200, 3), aPlay(2, 'Jellyfin', 'D', 60, 35),        // Two: much more now
+        aPlay(3, 'Jellyfin', 'E', 300, 45),                                           // Trial: never counted as "less"
+    ], [aCustomer(1, 'Ole'), aCustomer(2, 'Two'), aCustomer(3, 'Trial', ['trial' => true])], $now);
+    $t = $people->trends([
+        ['created_at' => $now - 10 * 86400, 'cancelled_at' => null, 'status' => 'active'],
+        ['created_at' => $now - 400 * 86400, 'cancelled_at' => $now - 5 * 86400, 'status' => 'cancelled'],
+    ]);
+    same(['Ole'], array_column($t['less'], 'name'), 'paying customers watching half or less');
+    same(['Two'], array_column($t['more'], 'name'), 'watching more');
+    same(['Two', 'Ole'], array_column($t['top'], 'name'), 'most watch time first');
+    same(8, count($t['weeks']), '8 weeks');
+    same(5, array_sum(array_column($t['weeks'], 'plays')), 'every play of the last 8 weeks in a week');
+    same([1, 1], [array_sum(array_column($t['months'], 'new')), array_sum(array_column($t['months'], 'cancelled'))], 'this year: one new, one cancelled');
+    same([2, 2, 0], [$t['paying'], $t['watching'], $t['idle_14']], 'paying, watching, idle');
+});
+
+test('admin data: Tracearr\'s and Silo\'s plays of 60 days, each tied to its customer', function () {
+    overviewFixture();
+    $data = overviewStats()->gatherPeople(\App\Models\Service::$rows, time());
+    $history = array_values(array_filter(state()['requests'], fn ($r) => $r['path'] === '/history'));
+    ok(isset($history[0]['query']['since']) && abs(strtotime($history[0]['query']['since']) - (time() - 60 * 86400)) < 120, 'Tracearr\'s history since 60 days ago');
+    $by = [];
+    foreach ($data['plays'] as $play) {
+        $by[(string) ($play['who'] ?? $play['username'])][] = $play['title'];
+    }
+    same(7, count($by['ole@example.com'] ?? []), 'Ole\'s Jellyfin plays are Ole\'s');
+    same(2, count($by['two@example.com'] ?? []), 'Two\'s');
+    same(['Glass Harbor', 'Arrival Point', 'Glass Harbor', 'Glass Harbor', 'Half Film'], $by['mette@example.com'] ?? [], 'Mette\'s from Silo (account 7), not account 8\'s');
+    ok(isset($by['grandma']), 'a Plex user without a subscription stays by username');
+    $silo = array_values(array_filter($data['plays'], fn ($p) => $p['server_type'] === 'silo'));
+    same(['Silo for Apple TV', 'Silo', true], [$silo[0]['app'], $silo[1]['app'], $silo[1]['transcode']], 'Silo\'s client name as the app; converted when Silo says transcode');
+    same(['Mette Test', 'Ole Test', 'Other Test', 'Two Test'], array_column($data['customers'], 'name'), 'every customer with a Paywarr subscription, nobody else\'s');
+    same([], $data['errors'], 'everything could be read');
+    $card = (new \Paymenter\Extensions\Others\PaywarrStats\PeopleStats($data['plays'], $data['customers'], time()))->customer('mette@example.com');
+    same(5, $card['plays_60'], 'the card reads them');
+});
+
+test('admin data: Tracearr down is said, Silo\'s still counted', function () {
+    overviewFixture();
+    $data = siloStats(['tracearr_url' => 'http://127.0.0.1:1'])->gatherPeople(\App\Models\Service::$rows, time());
+    ok(str_contains($data['errors'][0] ?? '', 'Tracearr'), 'Tracearr named: ' . json_encode($data['errors']));
+    same(5, count($data['plays']), 'Silo\'s plays still there');
 });
 
 /* ---------- summary ---------- */
