@@ -22,6 +22,8 @@ Stats shows each customer their own part of it:
 - Their shows, with posters and how far they are ("14 of 18 episodes")
 - What they watched recently, with posters: each show or movie once, with
   episode, date and how much of it
+- In December and January, their year in review (also by mail in the first
+  week of December)
 
 For you, in Paymenter's admin: a **Stats overview** of everyone together, and
 pages **per customer** (what they watch, when, on which apps and devices,
@@ -66,7 +68,8 @@ You need Tracearr, Silo or both, depending on what your customers use.
 4. **Set it up:** open it, fill in **Tracearr URL (internal)** (e.g.
    `http://192.168.1.10:3000`) and **Tracearr API key**, and/or **Silo URL
    (internal)** (Silo's own port, e.g. `http://192.168.1.10:8090`) and **Silo
-   API key**. Turn on **Enabled** and save.
+   API key**. Turn on **Enabled** and save. Tracearr already set on the Wizarr
+   server in Paywarr (1.26 or newer)? Then it can stay empty here.
 
 **My stats** then appears in the client area menu and in the top bar, next to
 Home and Shop.
@@ -84,7 +87,7 @@ What changed in each version is on the
 
 | | |
 |---|---|
-| [Stats overview, admin pages and reminders](docs/overview.md) | The staff overview, the admin pages per customer, per server and trends, and reminding customers who watch nothing |
+| [Stats overview, admin pages and reminders](docs/overview.md) | The year in review, the staff overview, the admin pages per customer, per server and trends, and reminding customers who watch nothing |
 | [How it works](docs/how-it-works.md) | Where the numbers come from, and troubleshooting |
 | [Tests and files](docs/development.md) | Running the tests, and what each file does |
 | [CHANGELOG](CHANGELOG.md) | What changed in each version |

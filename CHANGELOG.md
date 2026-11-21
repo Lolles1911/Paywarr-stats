@@ -3,6 +3,17 @@
 What changed in each version of Paywarr Stats. Each section is also the text
 of its release on GitHub (`.github/release-notes.sh` puts it there).
 
+## 1.10.0 (2026-11-21)
+
+- **New: the year in review.** From December 1 to January 31, "Your year" on
+  top of My stats: hours, plays, days, longest streak, busiest month,
+  favourite day and genre, the top 5 and the first play of the year. In the
+  first week of December every active customer who watched something gets
+  their year by mail (and Discord), and Paywarr's announcements channel gets
+  the server's year (no names of customers). Setting "Year in review".
+- Tracearr's address and key are taken from Paywarr (1.26) when none are set
+  here, so they only need filling in once.
+
 ## 1.9.1 (2026-11-20)
 
 - **Fixed:** with 1.9.0, Paymenter's admin answered "Server Error" on Paymenter
