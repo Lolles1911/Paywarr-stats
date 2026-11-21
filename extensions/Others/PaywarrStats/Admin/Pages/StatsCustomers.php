@@ -84,6 +84,12 @@ class StatsCustomers extends Page implements HasTable
                 ->visible(fn () => $this->customer !== null)->url(fn () => static::getUrl()),
             Action::make('paywarr')->label('Manage in Paywarr')->icon('ri-settings-3-line')->color('gray')
                 ->visible($paywarr !== null)->url($paywarr),
+            $this->csvAction('viewing-per-customer', fn () => [
+                ['Name', 'Email', 'Discord', 'Products', 'Servers', 'Status', 'Plays (30 days)', 'Hours (30 days)', 'Hours (30 days before)', 'Trend %', 'Last watched', 'Mostly in', 'Devices', 'Paid', 'Currency', 'Unpaid invoices', 'Requests used', 'Tickets', 'Customer since'],
+                array_map(fn ($r) => [$r['name'], $r['email'], $r['discord'] ?? '', $r['products'], $r['servers'], $r['trial'] ? 'trial' : $r['status'], $r['plays_30'],
+                    round($r['ms_30'] / 3600000, 1), round($r['ms_before'] / 3600000, 1), $r['trend'] ?? '', $r['last'] ? date('Y-m-d', $r['last']) : '', $r['app'], $r['devices'],
+                    $r['paid_total'], $r['currency'], $r['unpaid'], $r['requests']['used'] ?? '', $r['tickets'], $r['since'] ? date('Y-m-d', $r['since']) : ''], $this->stats()->customerRows()),
+            ])->visible(fn () => $this->customer === null),
             $this->refreshAction(),
         ];
     }

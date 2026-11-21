@@ -74,6 +74,35 @@ trait StatsPage
             });
     }
 
+    /** "Export CSV": a semicolon-separated file Excel opens as it is (UTF-8 with BOM). */
+    protected function csvAction(string $name, callable $make): Action
+    {
+        return Action::make('csv')->label('Export CSV')->icon('ri-download-2-line')->color('gray')
+            ->action(function () use ($name, $make) {
+                [$header, $rows] = $make();
+                $text = self::csvText($header, $rows);
+
+                return response()->streamDownload(function () use ($text) {
+                    echo $text;
+                }, $name . '-' . date('Y-m-d') . '.csv', ['Content-Type' => 'text/csv; charset=UTF-8']);
+            });
+    }
+
+    public static function csvText(array $header, iterable $rows): string
+    {
+        $out = fopen('php://temp', 'r+');
+        fwrite($out, "\xEF\xBB\xBF");
+        fputcsv($out, $header, ';');
+        foreach ($rows as $row) {
+            fputcsv($out, array_map(fn ($cell) => is_array($cell) ? implode(', ', $cell) : (string) $cell, $row), ';');
+        }
+        rewind($out);
+        $text = stream_get_contents($out);
+        fclose($out);
+
+        return $text;
+    }
+
     /** "As of 14:05 · Tracearr: …" under the heading. */
     public function getSubheading(): ?string
     {
