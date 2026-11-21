@@ -23,7 +23,7 @@ use Throwable;
 #[ExtensionMeta(
     name: 'Paywarr Stats',
     description: 'Shows each customer their own watch statistics from Tracearr or Silo, on a page in the client area.',
-    version: '1.11.0',
+    version: '1.11.1',
     author: 'Paywarr',
     url: 'https://github.com/Lolles1911/Paywarr-stats',
 )]
@@ -154,7 +154,7 @@ class PaywarrStats extends Extension
             'route' => 'extensions.paywarr-stats',
             'icon' => 'ri-bar-chart-2',
             'priority' => 25,
-            'condition' => Auth::check(),
+            'condition' => Auth::check() && $this->hasSubscription(Auth::user()),
         ]);
         // "My stats" in the top bar too.
         Event::listen('navigation', fn () => [
@@ -162,7 +162,7 @@ class PaywarrStats extends Extension
             'url' => route('extensions.paywarr-stats'),
             'icon' => 'ri-bar-chart-2',
             'priority' => 11,
-            'condition' => Auth::check(),
+            'condition' => Auth::check() && $this->hasSubscription(Auth::user()),
         ]);
         Event::listen('navigation.dashboard', fn () => [
             'name' => self::t('Stats overview'),
@@ -625,6 +625,19 @@ class PaywarrStats extends Extension
     }
 
     /** The customer's statistics, kept for CACHE_SECONDS. */
+    /** Whether "My stats" is shown: the customer has a Paywarr subscription. Kept 5 minutes. */
+    public function hasSubscription($user): bool
+    {
+        if (!$user) {
+            return false;
+        }
+        try {
+            return (bool) Cache::remember('paywarr-stats:has-subscription:' . $user->id, 300, fn () => $this->servicesOf($user) !== []);
+        } catch (Throwable $e) {
+            return false;
+        }
+    }
+
     /** The customer's Paywarr subscriptions that have access (active or suspended). */
     private function servicesOf($user): array
     {
