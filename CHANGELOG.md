@@ -3,6 +3,11 @@
 What changed in each version of Paywarr Stats. Each section is also the text
 of its release on GitHub (`.github/release-notes.sh` puts it there).
 
+## 1.11.1 (2026-11-21)
+
+- **"My stats" only for subscribers:** the menu item (side menu and top bar)
+  shows only to customers with a Paywarr subscription (active or suspended).
+
 ## 1.11.0 (2026-11-21)
 
 - **Export CSV** on Viewing per customer: every customer with plays, watch

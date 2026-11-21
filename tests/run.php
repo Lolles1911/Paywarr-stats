@@ -489,7 +489,7 @@ test('stats: a first, short play reads well: "under 1 min", no "0 min a day", th
 /** A Paymenter user; staff have admin.services.view. */
 class FakeUser
 {
-    public function __construct(private bool $staff) {}
+    public function __construct(private bool $staff, public int $id = 7) {}
 
     public function hasPermission($permission): bool
     {
@@ -661,17 +661,22 @@ test('overview: kept for a minute', function () {
     same([], state()['requests'], 'asked nothing the second time');
 });
 
-test('stats: boot adds "My stats" for everyone and "Stats overview" for staff', function () {
+test('stats: boot adds "My stats" for subscribers and "Stats overview" for staff', function () {
     \Illuminate\Support\Facades\Route::$routes = [];
     \Illuminate\Support\Facades\Event::$listeners = [];
     stats()->boot();
     $items = fn () => array_map(fn ($l) => $l[1](), array_values(array_filter(\Illuminate\Support\Facades\Event::$listeners, fn ($l) => $l[0] === 'navigation.dashboard')));
+    \Illuminate\Support\Facades\Cache::$store['paywarr-stats:has-subscription:7'] = true;
+    \Illuminate\Support\Facades\Cache::$store['paywarr-stats:has-subscription:8'] = false;
     \Illuminate\Support\Facades\Auth::$user = new FakeUser(false);
     same([['My stats', 'extensions.paywarr-stats', 'ri-bar-chart-2', true], ['Stats overview', 'extensions.paywarr-stats.admin', 'ri-dashboard-3', false]],
-        array_map(fn ($i) => [$i['name'], $i['route'], $i['icon'], $i['condition']], $items()), 'a customer');
-    \Illuminate\Support\Facades\Auth::$user = new FakeUser(true);
-    same([true, true], array_column($items(), 'condition'), 'staff');
+        array_map(fn ($i) => [$i['name'], $i['route'], $i['icon'], $i['condition']], $items()), 'a customer with a subscription');
+    \Illuminate\Support\Facades\Auth::$user = new FakeUser(false, 8);
+    same([false, false], array_column($items(), 'condition'), 'a customer without one sees neither');
+    \Illuminate\Support\Facades\Auth::$user = new FakeUser(true, 8);
+    same([false, true], array_column($items(), 'condition'), 'staff without a subscription: only the overview');
     \Illuminate\Support\Facades\Auth::$user = null;
+    unset(\Illuminate\Support\Facades\Cache::$store['paywarr-stats:has-subscription:7'], \Illuminate\Support\Facades\Cache::$store['paywarr-stats:has-subscription:8']);
 
     $routes = \Illuminate\Support\Facades\Route::$routes;
     same([

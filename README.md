@@ -72,7 +72,7 @@ You need Tracearr, Silo or both, depending on what your customers use.
    server in Paywarr (1.26 or newer)? Then it can stay empty here.
 
 **My stats** then appears in the client area menu and in the top bar, next to
-Home and Shop.
+Home and Shop, for customers with a Paywarr subscription.
 
 ## Updating
 
