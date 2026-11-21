@@ -171,7 +171,7 @@ trait Wrapped
             $html .= '</ol>';
         }
         if ($year['first']) {
-            $html .= '<p class="ps-muted ps-small" style="margin-top:.8rem">' . $e(self::t('It started on :date with :title.', ['date' => date(self::t('M j'), $year['first']['at']), 'title' => $year['first']['title']])) . '</p>';
+            $html .= '<p class="ps-muted ps-small" style="margin-top:.8rem">' . $e(self::t('It started on :date with :title.', ['date' => self::t(':month :day', ['month' => $this->monthName((int) date('n', $year['first']['at'])), 'day' => date('j', $year['first']['at'])]), 'title' => $year['first']['title']])) . '</p>';
         }
 
         return $html . '</section>';

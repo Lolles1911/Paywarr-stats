@@ -101,6 +101,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(401, {"message": "Invalid API key"})
             return self.send_json(200, {"period": query.get("period", "month"), "plays": STATE["activity"], "concurrent": [], "byDayOfWeek": [], "byHourOfDay": [], "platforms": [], "quality": {}})
 
+        # Stopping a stream (public API v1), recorded.
+        if method == "POST" and path.startswith("/api/v1/public/streams/") and path.endswith("/terminate"):
+            STATE.setdefault("terminated", []).append(path.split("/")[-2])
+            return self.send_json(200, {"success": True})
+
         prefix = "/api/v2/public"
         if not path.startswith(prefix + "/"):
             return self.send_json(404, {"message": "Not found"})
@@ -120,6 +125,9 @@ class Handler(BaseHTTPRequestHandler):
             page = STATE["identities"][start:start + page_size]
             nxt = str(start + page_size) if start + page_size < len(STATE["identities"]) else None
             return self.send_json(200, {"data": page, "meta": {"nextCursor": nxt, "pageSize": page_size}})
+        if method == "GET" and path in ("/violations", "/recently-added"):
+            rows = STATE.get("violations" if path == "/violations" else "recently_added", [])
+            return self.send_json(200, {"data": rows, "meta": {"nextCursor": None, "pageSize": page_size}})
         if method == "GET" and path == "/servers":
             return self.send_json(200, {"data": STATE["servers"], "tracearr_version": "test"})
         if method == "GET" and path == "/history":
