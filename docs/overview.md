@@ -25,7 +25,7 @@ too), for staff who may view services:
   subscription): subscription and media servers, status, plays and watch time
   over the last 30 days, "Than before" (watch time against the 30 days before),
   last watched, the app they mostly use and on how many devices, paid in total,
-  unpaid invoices, requests and tickets. Search, sort, and filter on status,
+  unpaid invoices, requests and tickets. Search, sort, export to CSV, and filter on status,
   media server, "Nothing in 14 days", "Half or less than before", "More than
   before" and "With unpaid invoices". Click a customer for their card: viewing,
   when they watch (per hour and weekday), most watched titles, apps and devices

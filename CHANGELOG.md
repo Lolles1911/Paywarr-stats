@@ -3,6 +3,12 @@
 What changed in each version of Paywarr Stats. Each section is also the text
 of its release on GitHub (`.github/release-notes.sh` puts it there).
 
+## 1.11.0 (2026-11-21)
+
+- **Export CSV** on Viewing per customer: every customer with plays, watch
+  time, trend, last watched, app, devices, money, requests and tickets, for
+  Excel.
+
 ## 1.10.0 (2026-11-21)
 
 - **New: the year in review.** From December 1 to January 31, "Your year" on
