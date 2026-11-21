@@ -184,6 +184,13 @@ namespace Illuminate\Support\Facades {
             return self::$store[$key] ?? $default;
         }
 
+        public static function forever($key, $value): bool
+        {
+            self::$store[$key] = $value;
+
+            return true;
+        }
+
         public static function put($key, $value, $ttl = null): bool
         {
             self::$store[$key] = $value;

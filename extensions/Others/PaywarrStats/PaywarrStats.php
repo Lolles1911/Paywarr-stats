@@ -30,6 +30,7 @@ use Throwable;
 class PaywarrStats extends Extension
 {
     use Concerns\People;
+    use Concerns\Wrapped;
 
     /** Numbers are kept this long per customer, so page views do not hit Tracearr. */
     private const CACHE_SECONDS = 600;
@@ -87,14 +88,57 @@ class PaywarrStats extends Extension
                 'validation' => 'nullable|integer|min:3|max:90',
                 'description' => 'E.g. 14. A paying customer who hasn\'t watched anything for that long gets a friendly mail, and a private Discord message if they connected Discord (sent through Paywarr 1.25 or newer). At most once a month per customer; checked daily. Empty: off.',
             ],
+            [
+                'name' => 'wrapped',
+                'label' => 'Year in review',
+                'type' => 'checkbox',
+                'default' => true,
+                'description' => 'December 1 to January 31: "Your year" on top of My stats. In the first week of December: a mail (and Discord message) to every active customer with their year, and one post with the server\'s year in Paywarr\'s announcements channel.',
+            ],
         ];
+    }
+
+    /** Tracearr's address and key: these settings, or else Paywarr's (on a Wizarr server). */
+    public function config($key)
+    {
+        $value = parent::config($key);
+        if (in_array($key, ['tracearr_url', 'tracearr_api_key'], true) && trim((string) $value) === '') {
+            return self::paywarrTracearr()[$key] ?? $value;
+        }
+
+        return $value;
+    }
+
+    private static ?array $paywarrTracearr = null;
+
+    /** The first Wizarr server with Tracearr set up (Paywarr 1.26 or newer). */
+    private static function paywarrTracearr(): array
+    {
+        if (self::$paywarrTracearr !== null) {
+            return self::$paywarrTracearr;
+        }
+        try {
+            foreach (\App\Models\Server::where('extension', 'Wizarr')->with('settings')->get() as $server) {
+                $settings = \App\Helpers\ExtensionHelper::settingsToArray($server->settings);
+                if (trim((string) ($settings['tracearr_url'] ?? '')) !== '' && trim((string) ($settings['tracearr_api_key'] ?? '')) !== '') {
+                    return self::$paywarrTracearr = ['tracearr_url' => (string) $settings['tracearr_url'], 'tracearr_api_key' => (string) $settings['tracearr_api_key']];
+                }
+            }
+        } catch (Throwable $e) {
+            // Paywarr's settings can't be read: none then.
+        }
+
+        return self::$paywarrTracearr = [];
     }
 
     public function boot()
     {
         // Daily: customers who watch nothing are reminded (when switched on).
         $register = function (Schedule $schedule) {
-            $schedule->call(fn () => $this->remindInactive())->dailyAt('11:17')->name('paywarr-stats-remind-inactive')->withoutOverlapping();
+            $schedule->call(function () {
+                $this->remindInactive();
+                $this->sendWrapped();
+            })->dailyAt('11:17')->name('paywarr-stats-remind-inactive')->withoutOverlapping();
         };
         if (function_exists('app') && method_exists(app(), 'afterResolving')) {
             app()->afterResolving(Schedule::class, $register);
@@ -503,8 +547,17 @@ class PaywarrStats extends Extension
             $stats = null;
         }
 
+        $year = null;
+        if (($wrappedYear = self::wrappedYear()) !== null && !in_array((string) ($this->config('wrapped') ?? '1'), ['0', 'off', 'false'], true)) {
+            try {
+                $year = $this->yearFor($this->mediaAccounts(array_map(fn ($service) => $this->propertiesOf($service), $this->servicesOf($user))), $wrappedYear);
+            } catch (Throwable $e) {
+                Log::info('Paywarr Stats: the year of user ' . $user->id . ' could not be read: ' . $e->getMessage());
+            }
+        }
+
         return view('layouts.app', [
-            'slot' => new HtmlString($this->pageHtml($stats, rtrim(route('extensions.paywarr-stats'), '/') . '/poster/', (string) ($user->first_name ?? ''))),
+            'slot' => new HtmlString($this->pageHtml($stats, rtrim(route('extensions.paywarr-stats'), '/') . '/poster/', (string) ($user->first_name ?? ''), $year)),
             'title' => self::t('My stats'),
         ]);
     }
@@ -572,6 +625,19 @@ class PaywarrStats extends Extension
     }
 
     /** The customer's statistics, kept for CACHE_SECONDS. */
+    /** The customer's Paywarr subscriptions that have access (active or suspended). */
+    private function servicesOf($user): array
+    {
+        $list = [];
+        foreach (Service::where('user_id', $user->id)->whereIn('status', ['active', 'suspended'])->with(['properties', 'product.server'])->get() as $service) {
+            if ($service->product?->server?->extension === 'Wizarr') {
+                $list[] = $service;
+            }
+        }
+
+        return $list;
+    }
+
     private function statsForUser($user): array
     {
         // The version: entries stored by an older version have another shape.
@@ -996,13 +1062,13 @@ class PaywarrStats extends Extension
     }
 
     /** The page body. Styled with the theme's colour variables, so it fits any theme, light or dark. */
-    public function pageHtml(?array $stats, string $posterBase = '/stats/poster/', string $name = ''): string
+    public function pageHtml(?array $stats, string $posterBase = '/stats/poster/', string $name = '', ?array $year = null): string
     {
         $e = fn ($value) => htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
         $html = '<div id="paywarr-stats" class="container mt-14"><style>' . $this->css() . '</style>'
             . '<header class="ps-head"><h1>' . $e(self::t('My stats')) . '</h1>'
             . ($name !== '' ? '<p class="ps-muted">' . $e(self::t('Hi :name, here is what you have been watching.', ['name' => $name])) . '</p>' : '')
-            . '</header>';
+            . '</header>' . ($year !== null ? $this->wrappedHtml($year) : '');
 
         if ($stats === null || ($stats['state'] ?? '') !== 'ok') {
             $message = match ($stats['state'] ?? null) {

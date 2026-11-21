@@ -12,6 +12,7 @@ require __DIR__ . '/../extensions/Others/PaywarrStats/AdminOverview.php';
 require __DIR__ . '/../extensions/Others/PaywarrStats/BusinessOverview.php';
 require __DIR__ . '/../extensions/Others/PaywarrStats/PeopleStats.php';
 require __DIR__ . '/../extensions/Others/PaywarrStats/Concerns/People.php';
+require __DIR__ . '/../extensions/Others/PaywarrStats/Concerns/Wrapped.php';
 require __DIR__ . '/../extensions/Others/PaywarrStats/PaywarrStats.php';
 
 use Paymenter\Extensions\Others\PaywarrStats\PaywarrStats;
@@ -684,6 +685,9 @@ test('stats: boot adds "My stats" for everyone and "Stats overview" for staff', 
 
 test('stats: every text has a Danish translation', function () {
     $code = file_get_contents(__DIR__ . '/../extensions/Others/PaywarrStats/PaywarrStats.php');
+    foreach (glob(__DIR__ . '/../extensions/Others/PaywarrStats/Concerns/*.php') as $file) {
+        $code .= file_get_contents($file);
+    }
     preg_match_all('/self::t\(\s*\'((?:[^\'\\\\]|\\\\.)*)\'/', $code, $m);
     $used = array_unique(array_map(fn ($t) => strtr($t, ['\\\\' => '\\', "\\'" => "'"]), $m[1]));
     $danish = json_decode(file_get_contents(__DIR__ . '/../extensions/Others/PaywarrStats/lang/da.json'), true);
@@ -925,6 +929,64 @@ test('admin data: Tracearr down is said, Silo\'s still counted', function () {
     $data = siloStats(['tracearr_url' => 'http://127.0.0.1:1'])->gatherPeople(\App\Models\Service::$rows, time());
     ok(str_contains($data['errors'][0] ?? '', 'Tracearr'), 'Tracearr named: ' . json_encode($data['errors']));
     same(5, count($data['plays']), 'Silo\'s plays still there');
+});
+
+/* ---------- year in review ---------- */
+
+test('year in review: shown December and January, the year\'s numbers, top titles, streak', function () {
+    same(2026, PaywarrStats::wrappedYear(strtotime('2026-12-03 12:00')), 'December: this year');
+    same(2025, PaywarrStats::wrappedYear(strtotime('2026-01-20 12:00')), 'January: last year');
+    same(null, PaywarrStats::wrappedYear(strtotime('2026-06-01 12:00')), 'not in June');
+    $at = fn (string $day, int $hour = 20) => strtotime("2026-$day $hour:00:00");
+    $plays = [
+        aPlay(1, 'Jellyfin', 'Glass Harbor', 45, 0, ['started' => $at('03-01'), 'type' => 'episode']),
+        aPlay(1, 'Jellyfin', 'Glass Harbor', 45, 0, ['started' => $at('03-02'), 'type' => 'episode']),
+        aPlay(1, 'Jellyfin', 'Glass Harbor', 45, 0, ['started' => $at('03-03'), 'type' => 'episode']),
+        aPlay(1, 'Jellyfin', 'Arrival', 120, 0, ['started' => $at('01-05'), 'genres' => ['Sci-Fi']]),
+        aPlay(1, 'Jellyfin', 'Clip', 1, 0, ['started' => $at('05-05')]),
+        aPlay(1, 'Jellyfin', 'Last year', 90, 0, ['started' => strtotime('2025-12-30 20:00')]),
+    ];
+    $year = stats()->summarizeYear($plays, 2026);
+    same([4, 255 * 60000, 1, 3, 4], [$year['plays'], $year['ms'], $year['movies'], $year['episodes'], $year['days']], 'this year only, short plays out');
+    same(['Glass Harbor', 'Arrival'], array_column($year['top'], 'title'), 'top by watch time');
+    same([3, 3, 'Drama', 'Arrival'], [$year['streak'], $year['month'], $year['genre'], $year['first']['title']], 'streak, busiest month, genre, the first play');
+    $html = stats()->wrappedHtml($year);
+    ok(str_contains($html, 'Your 2026') && str_contains($html, 'Glass Harbor') && str_contains($html, 'March'), 'the section');
+    same('', stats()->wrappedHtml(stats()->summarizeYear([], 2026)), 'nothing watched: nothing shown');
+});
+
+test('year in review: the first week of December, each customer once, and one post with the server\'s year', function () {
+    overviewFixture();
+    foreach (\App\Models\Service::$rows as $row) {
+        $row->user = new class($row->user->email, $row->user->first_name ?? '') {
+            public array $properties = [];
+            public function __construct(public string $email, public string $first_name) {}
+            public function properties() { $self = $this; return new class($self) {
+                public function __construct(private $user) {}
+                public function updateOrCreate($match, $values) { $this->user->properties[$match['key']] = $values['value']; }
+            }; }
+        };
+    }
+    $now = strtotime(date('Y') . '-12-02 11:17');
+    $year = (int) date('Y');
+    $sent = [];
+    $notify = function ($service, $title, $text, $button) use (&$sent) { $sent[] = [$service->user->email, $title]; return true; };
+    $posts = [];
+    $announce = function (string $text) use (&$posts) { $posts[] = $text; return true; };
+    $result = overviewStats()->sendWrapped($now, \App\Models\Service::$rows, $notify, $announce);
+    ok(count($result['customers']) >= 1, 'customers who watched get their year: ' . json_encode($sent));
+    same('Your ' . $year . ' in review', $sent[0][1] ?? null, 'titled');
+    same(true, $result['posted'], 'the server\'s year posted');
+    ok(str_contains($posts[0] ?? '', 'Our ' . $year . ' together') && !str_contains($posts[0], '@example.com'), 'no names of customers: ' . ($posts[0] ?? ''));
+    $again = overviewStats()->sendWrapped($now + 86400, \App\Models\Service::$rows, $notify, $announce);
+    same([[], false], [$again['customers'], $again['posted']], 'once');
+    same([[], false], array_values(overviewStats()->sendWrapped(strtotime($year . '-11-30 11:17'), \App\Models\Service::$rows, $notify, $announce)), 'not in November');
+});
+
+test('Tracearr: Paywarr\'s address and key are used when Paywarr Stats has none', function () {
+    $stats = new PaywarrStats(['silo_url' => 'x']);
+    same(null, $stats->config('tracearr_url'), 'neither has one (no Paywarr here)');
+    same('mine', (new PaywarrStats(['tracearr_url' => 'mine']))->config('tracearr_url'), 'its own first');
 });
 
 /* ---------- summary ---------- */
