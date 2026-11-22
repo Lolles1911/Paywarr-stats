@@ -26,7 +26,7 @@ class StatsServers extends Page
 
     protected static string|\UnitEnum|null $navigationGroup = 'Paywarr Stats';
 
-    protected static ?int $navigationSort = 2;
+    protected static ?int $navigationSort = 402;
 
     protected static ?string $navigationLabel = 'Viewing per server';
 

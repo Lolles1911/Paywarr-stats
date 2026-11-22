@@ -37,7 +37,7 @@ class StatsCustomers extends Page implements HasTable
 
     protected static string|\UnitEnum|null $navigationGroup = 'Paywarr Stats';
 
-    protected static ?int $navigationSort = 1;
+    protected static ?int $navigationSort = 401;
 
     protected static ?string $navigationLabel = 'Viewing per customer';
 
@@ -55,7 +55,7 @@ class StatsCustomers extends Page implements HasTable
         $items = self::bothGroups();
         try {
             $items[] = NavigationItem::make('Stats overview')->key('paywarr-stats-overview')->group('Paywarr Stats')
-                ->icon('ri-dashboard-3-line')->sort(0)->url(route('extensions.paywarr-stats.admin'));
+                ->icon('ri-dashboard-3-line')->sort(400)->url(route('extensions.paywarr-stats.admin'));
         } catch (Throwable $e) {
             // Without the route there is nothing to link to.
         }

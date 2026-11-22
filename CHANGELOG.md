@@ -3,6 +3,12 @@
 What changed in each version of Paywarr Stats. Each section is also the text
 of its release on GitHub (`.github/release-notes.sh` puts it there).
 
+## 1.11.2 (2026-11-22)
+
+- **Admin menu:** the pages are in "Paywarr Stats" and, with Paywarr 1.31 or
+  newer, in "Paywarr: Operations" (was "Paywarr"); the Paywarr Stats group
+  comes after Paywarr's groups.
+
 ## 1.11.1 (2026-11-21)
 
 - **"My stats" only for subscribers:** the menu item (side menu and top bar)
