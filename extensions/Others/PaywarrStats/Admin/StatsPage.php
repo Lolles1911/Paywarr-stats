@@ -27,17 +27,17 @@ trait StatsPage
         return PaywarrStats::isAdmin(Auth::user());
     }
 
-    /** In "Paywarr Stats" and, as the same page, in "Paywarr". */
+    /** In "Paywarr Stats" and, as the same page, in "Paywarr: Operations". */
     public static function getNavigationItems(): array
     {
         $items = parent::getNavigationItems();
         $route = static::getNavigationItemActiveRoutePattern();
         $items[] = NavigationItem::make(static::getNavigationLabel())
             ->key(static::class . '@paywarr')
-            ->group('Paywarr')
+            ->group('Paywarr: Operations')
             ->icon(static::getNavigationIcon())
             ->isActiveWhen(fn (): bool => request()->routeIs($route))
-            ->sort(50 + (int) static::getNavigationSort())
+            ->sort(350 + (int) static::getNavigationSort() % 100)
             ->url(static::getNavigationUrl());
 
         return $items;

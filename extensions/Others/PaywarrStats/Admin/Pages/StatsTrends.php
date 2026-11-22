@@ -24,7 +24,7 @@ class StatsTrends extends Page
 
     protected static string|\UnitEnum|null $navigationGroup = 'Paywarr Stats';
 
-    protected static ?int $navigationSort = 3;
+    protected static ?int $navigationSort = 403;
 
     protected static ?string $navigationLabel = 'Rankings and trends';
 
