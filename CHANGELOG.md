@@ -3,6 +3,10 @@
 What changed in each version of Paywarr Stats. Each section is also the text
 of its release on GitHub (`.github/release-notes.sh` puts it there).
 
+## 1.11.3 (2026-11-23)
+
+- **"My stats" stays on one line** in the top bar.
+
 ## 1.11.2 (2026-11-22)
 
 - **Admin menu:** the pages are in "Paywarr Stats" and, with Paywarr 1.31 or
