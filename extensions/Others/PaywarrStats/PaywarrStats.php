@@ -23,7 +23,7 @@ use Throwable;
 #[ExtensionMeta(
     name: 'Paywarr Stats',
     description: 'Shows each customer their own watch statistics from Tracearr or Silo, on a page in the client area.',
-    version: '1.11.2',
+    version: '1.11.3',
     author: 'Paywarr',
     url: 'https://github.com/Lolles1911/Paywarr-stats',
 )]
@@ -158,7 +158,7 @@ class PaywarrStats extends Extension
         ]);
         // "My stats" in the top bar too.
         Event::listen('navigation', fn () => [
-            'name' => self::t('My stats'),
+            'name' => str_replace(' ', "\u{00A0}", self::t('My stats')), // one line in the top bar
             'url' => route('extensions.paywarr-stats'),
             'icon' => 'ri-bar-chart-2',
             'priority' => 11,
