@@ -23,7 +23,7 @@ use Throwable;
 #[ExtensionMeta(
     name: 'Paywarr Stats',
     description: 'Shows each customer their own watch statistics from Tracearr or Silo, on a page in the client area.',
-    version: '1.11.3',
+    version: '1.11.4',
     author: 'Paywarr',
     url: 'https://github.com/Lolles1911/Paywarr-stats',
 )]
@@ -451,7 +451,10 @@ class PaywarrStats extends Extension
                 return false;
             }
 
-            return (new $paywarr([]))->forService($service)->notifyCustomer($service, $title, $text, $button) !== [];
+            // Paywarr 1.35+: tagged, so the customer can unsubscribe from just these.
+            $kind = (new \ReflectionMethod($paywarr, 'notifyCustomer'))->getNumberOfParameters() >= 8 ? ['kind' => 'reminders'] : [];
+
+            return (new $paywarr([]))->forService($service)->notifyCustomer($service, $title, $text, $button, ...$kind) !== [];
         };
         $services ??= Service::with(['properties', 'product.server', 'product.settings', 'user.properties'])->whereIn('status', ['active'])->get();
 

@@ -205,7 +205,10 @@ trait Wrapped
                 return false;
             }
 
-            return (new $paywarr([]))->forService($service)->notifyCustomer($service, $title, $text, $button) !== [];
+            // Paywarr 1.35+: tagged, so the customer can unsubscribe from just these.
+            $kind = (new \ReflectionMethod($paywarr, 'notifyCustomer'))->getNumberOfParameters() >= 8 ? ['kind' => 'stats'] : [];
+
+            return (new $paywarr([]))->forService($service)->notifyCustomer($service, $title, $text, $button, ...$kind) !== [];
         };
         $everyone = [];
         foreach ($byUser as $userId => $list) {
