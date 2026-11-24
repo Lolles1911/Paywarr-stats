@@ -3,6 +3,12 @@
 What changed in each version of Paywarr Stats. Each section is also the text
 of its release on GitHub (`.github/release-notes.sh` puts it there).
 
+## 1.11.4 (2026-11-24)
+
+- **Unsubscribe:** with Paywarr 1.35 or newer, Wrapped is sent as "stats and
+  surveys" and the "we miss you" mail as "reminders", so a customer can
+  unsubscribe from each by the link at the bottom of the mail.
+
 ## 1.11.3 (2026-11-23)
 
 - **"My stats" stays on one line** in the top bar.
