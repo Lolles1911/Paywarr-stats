@@ -23,7 +23,7 @@ use Throwable;
 #[ExtensionMeta(
     name: 'Paywarr Stats',
     description: 'Shows each customer their own watch statistics from Tracearr or Silo, on a page in the client area.',
-    version: '1.11.4',
+    version: '1.11.5',
     author: 'Paywarr',
     url: 'https://github.com/Lolles1911/Paywarr-stats',
 )]
@@ -446,9 +446,13 @@ class PaywarrStats extends Extension
         $now ??= time();
         $since = $now - $days * 86400;
         $paywarr = 'Paymenter\\Extensions\\Servers\\Wizarr\\Wizarr';
-        $notify ??= function (Service $service, string $title, string $text, array $button) use ($paywarr) {
+        $notify ??= function (Service $service, string $title, string $text, array $button) use ($paywarr, $days) {
             if (!class_exists($paywarr) || !method_exists($paywarr, 'notifyCustomer')) {
                 return false;
+            }
+            // Paywarr 1.36+: its "Watched nothing for a while" mail, with new titles (editable under Mail).
+            if (method_exists($paywarr, 'remindInactiveMail')) {
+                return (new $paywarr([]))->forService($service)->remindInactiveMail($service, $days) !== [];
             }
 
             // Paywarr 1.35+: tagged, so the customer can unsubscribe from just these.

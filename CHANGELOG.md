@@ -3,6 +3,13 @@
 What changed in each version of Paywarr Stats. Each section is also the text
 of its release on GitHub (`.github/release-notes.sh` puts it there).
 
+## 1.11.5 (2026-11-25)
+
+- **"We miss you" with what is new:** with Paywarr 1.36 or newer, "Remind
+  customers who watched nothing" sends Paywarr's "Watched nothing for a
+  while" mail: a few new titles, and the text can be changed under Paywarr:
+  Mail → Automatic mails. Paywarr → At risk lists the same customers.
+
 ## 1.11.4 (2026-11-24)
 
 - **Unsubscribe:** with Paywarr 1.35 or newer, Wrapped is sent as "stats and
