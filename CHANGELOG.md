@@ -3,6 +3,11 @@
 What changed in each version of Paywarr Stats. Each section is also the text
 of its release on GitHub (`.github/release-notes.sh` puts it there).
 
+## 1.11.6 (2026-11-25)
+
+- With Paywarr 1.37 or newer, Paywarr's Tracearr is read from Paywarr ->
+  Settings (where it moved from the Wizarr server).
+
 ## 1.11.5 (2026-11-25)
 
 - **"We miss you" with what is new:** with Paywarr 1.36 or newer, "Remind
