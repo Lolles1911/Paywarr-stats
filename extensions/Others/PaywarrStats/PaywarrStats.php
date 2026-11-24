@@ -23,7 +23,7 @@ use Throwable;
 #[ExtensionMeta(
     name: 'Paywarr Stats',
     description: 'Shows each customer their own watch statistics from Tracearr or Silo, on a page in the client area.',
-    version: '1.11.5',
+    version: '1.11.6',
     author: 'Paywarr',
     url: 'https://github.com/Lolles1911/Paywarr-stats',
 )]
@@ -111,13 +111,19 @@ class PaywarrStats extends Extension
 
     private static ?array $paywarrTracearr = null;
 
-    /** The first Wizarr server with Tracearr set up (Paywarr 1.26 or newer). */
+    /** Paywarr's Tracearr: Paywarr -> Settings (1.37+), else the first Wizarr server with it (1.26+). */
     private static function paywarrTracearr(): array
     {
         if (self::$paywarrTracearr !== null) {
             return self::$paywarrTracearr;
         }
         try {
+            // Paywarr 1.37+: Tracearr is under Paywarr -> Settings.
+            $paywarr = 'Paymenter\\Extensions\\Servers\\Wizarr\\Wizarr';
+            if (class_exists($paywarr) && method_exists($paywarr, 'globalSettings') && ($global = $paywarr::globalSettings()) !== null) {
+                return self::$paywarrTracearr = trim((string) ($global['tracearr_url'] ?? '')) !== '' && trim((string) ($global['tracearr_api_key'] ?? '')) !== ''
+                    ? ['tracearr_url' => (string) $global['tracearr_url'], 'tracearr_api_key' => (string) $global['tracearr_api_key']] : [];
+            }
             foreach (\App\Models\Server::where('extension', 'Wizarr')->with('settings')->get() as $server) {
                 $settings = \App\Helpers\ExtensionHelper::settingsToArray($server->settings);
                 if (trim((string) ($settings['tracearr_url'] ?? '')) !== '' && trim((string) ($settings['tracearr_api_key'] ?? '')) !== '') {
