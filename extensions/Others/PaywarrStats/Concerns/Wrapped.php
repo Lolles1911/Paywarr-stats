@@ -42,8 +42,10 @@ trait Wrapped
 
         return Cache::remember($key, 6 * 3600, function () use ($accounts, $year) {
             $plays = [];
-            $silo = array_values(array_filter($accounts, fn ($account) => $account['type'] === 'silo'));
-            $others = array_values(array_filter($accounts, fn ($account) => $account['type'] !== 'silo'));
+            // Silo through Tracearr when it watches Silo (3.3+), else Silo itself.
+            $viaTracearr = $this->tracearrHasSilo();
+            $silo = $viaTracearr ? [] : array_values(array_filter($accounts, fn ($account) => $account['type'] === 'silo'));
+            $others = $viaTracearr ? $accounts : array_values(array_filter($accounts, fn ($account) => $account['type'] !== 'silo'));
             if ($others && $this->configured('tracearr')) {
                 foreach ($this->matchIdentities($others, $this->client()->users()) as $id) {
                     foreach ($this->client()->userHistory($id, 3000) as $play) {
@@ -51,7 +53,7 @@ trait Wrapped
                     }
                 }
             }
-            if ($silo && $this->configured('silo')) {
+            if ($silo && $this->siloDirect()) {
                 foreach ($silo as $account) {
                     if (ctype_digit((string) $account['id'])) {
                         foreach ($this->silo()->history((string) $account['id'], 2000) as $play) {
@@ -79,7 +81,9 @@ trait Wrapped
         $months = array_fill(1, 12, 0);
         $weekdays = array_fill(1, 7, 0);
         $days = [];
+        $profiles = [];
         foreach ($plays as $play) {
+            $profiles[(string) ($play['profile'] ?? '')] = ($profiles[(string) ($play['profile'] ?? '')] ?? 0) + (int) $play['ms'];
             $key = $play['type'] . '|' . strtolower($play['title']);
             $titles[$key] ??= ['title' => $play['title'], 'type' => $play['type'], 'plays' => 0, 'ms' => 0];
             $titles[$key]['plays']++;
@@ -115,6 +119,9 @@ trait Wrapped
             'weekday' => $plays ? (int) array_search(max($weekdays), $weekdays, true) : null,
             'streak' => $streak,
             'first' => $plays ? ['title' => $plays[0]['title'], 'at' => $plays[0]['started']] : null,
+            // The profile that watched the most, when the account has more than its main one.
+            'profile' => count($profiles) > 1 || (count($profiles) === 1 && array_key_first($profiles) !== '')
+                ? (string) array_search(max($profiles), $profiles, true) : null,
         ];
     }
 
@@ -154,6 +161,9 @@ trait Wrapped
         }
         if ($year['genre'] !== '') {
             $facts[] = [self::t('Favourite genre'), $year['genre']];
+        }
+        if (($year['profile'] ?? null) !== null) {
+            $facts[] = [self::t('Watched the most'), $year['profile'] !== '' ? $year['profile'] : self::t('Main profile')];
         }
         $html = '<section class="ps-card ps-wrapped" style="margin-bottom:1.25rem;background:linear-gradient(135deg,hsl(var(--color-primary)/.28),hsl(var(--color-primary)/.06));border-color:hsl(var(--color-primary)/.4)">'
             . '<div class="ps-label">' . $e(self::t('Your :year', ['year' => $year['year']])) . '</div>'
@@ -285,7 +295,7 @@ trait Wrapped
                     $plays[] = $this->peopleTracearrPlay($play, []);
                 }
             }
-            if ($this->configured('silo')) {
+            if ($this->siloDirect()) {
                 foreach ($this->silo()->accounts() as $account) {
                     if (($account['role'] ?? '') === 'admin') {
                         continue;

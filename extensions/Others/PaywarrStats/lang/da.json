@@ -153,5 +153,8 @@
     ":hours hours watched, :plays plays, :viewers viewers.": ":hours timer set, :plays afspilninger, :viewers seere.",
     "Most watched movies": "Mest sete film",
     "Most watched shows": "Mest sete serier",
-    ":month :day": ":day. :month"
+    ":month :day": ":day. :month",
+    "Who watches": "Hvem ser",
+    "Main profile": "Hovedprofil",
+    "Watched the most": "Så mest"
 }
