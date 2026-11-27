@@ -154,6 +154,8 @@ trait People
             'platform' => (string) ($play['platform'] ?? ''),
             'transcode' => isset($play['is_transcode']) ? (bool) $play['is_transcode'] : null,
             'genres' => array_values(array_filter((array) ($play['genres'] ?? []), 'is_string')),
+            // Tracearr 3.3: the profile (Silo, tofa) when it isn't the account's main one.
+            'profile' => trim((string) ($play['profile'] ?? '')),
         ];
     }
 

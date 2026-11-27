@@ -138,6 +138,8 @@ class Handler(BaseHTTPRequestHandler):
             start = int(query.get("cursor", "0") or 0)
             nxt = str(start + page_size) if start + page_size < len(plays) else None
             return self.send_json(200, {"data": plays[start:start + page_size], "meta": {"nextCursor": nxt, "pageSize": page_size}})
+        if method == "GET" and path == "/libraries":
+            return self.send_json(200, {"data": STATE.get("libraries", [])})
         if method == "GET" and path == "/streams":
             return self.send_json(200, {"data": STATE["streams"], "summary": {"total": len(STATE["streams"])}})
         if method == "GET" and len(parts) == 3 and parts[0] == "media" and parts[2] == "history":

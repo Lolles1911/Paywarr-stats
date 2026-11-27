@@ -988,6 +988,15 @@ test('year in review: the first week of December, each customer once, and one po
     same([[], false], array_values(overviewStats()->sendWrapped(strtotime($year . '-11-30 11:17'), \App\Models\Service::$rows, $notify, $announce)), 'not in November');
 });
 
+test('who watches: profiles (Silo, tofa) when one is not the main one', function () {
+    $p = new \Paymenter\Extensions\Others\PaywarrStats\PaywarrStats([]);
+    $plays = [['started_at' => '2026-11-20T20:00:00Z', 'profile' => '', 'device' => 'TV', 'transcode' => false], ['started_at' => '2026-11-21T20:00:00Z', 'profile' => 'Kids', 'device' => 'TV', 'transcode' => false],
+        ['started_at' => '2026-11-22T20:00:00Z', 'profile' => 'Kids', 'device' => 'TV', 'transcode' => false]];
+    $i = $p->insights($plays, strtotime('2026-11-23'));
+    same(['Kids' => 2, '' => 1], $i['profiles'], 'per profile, the main one as ""');
+    same([], $p->insights([['started_at' => '2026-11-20T20:00:00Z', 'profile' => '', 'device' => 'TV']], strtotime('2026-11-23'))['profiles'], 'only main profile: nothing to show');
+});
+
 test('Tracearr: Paywarr\'s address and key are used when Paywarr Stats has none', function () {
     $stats = new PaywarrStats(['silo_url' => 'x']);
     same(null, $stats->config('tracearr_url'), 'neither has one (no Paywarr here)');

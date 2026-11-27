@@ -761,9 +761,10 @@ class PaywarrStats extends Extension
         if (!$accounts) {
             return ['state' => 'no_access'];
         }
-        // Silo accounts are asked of Silo itself; the rest of Tracearr.
-        $silo = array_values(array_filter($accounts, fn ($account) => $account['type'] === 'silo'));
-        $others = array_values(array_filter($accounts, fn ($account) => $account['type'] !== 'silo'));
+        // Silo accounts are asked of Silo itself, unless Tracearr (3.3+) watches Silo; the rest of Tracearr.
+        $viaTracearr = $this->tracearrHasSilo();
+        $silo = $viaTracearr ? [] : array_values(array_filter($accounts, fn ($account) => $account['type'] === 'silo'));
+        $others = $viaTracearr ? $accounts : array_values(array_filter($accounts, fn ($account) => $account['type'] !== 'silo'));
         $parts = [];
         if ($others && $this->configured('tracearr')) {
             $ids = $this->matchIdentities($others, $this->client()->users());
@@ -1023,6 +1024,8 @@ class PaywarrStats extends Extension
             'watched_ms' => (int) ($play['duration_ms'] ?? 0),
             'device' => trim((string) ($play['device'] ?? '')) ?: trim((string) ($play['player'] ?? '')) ?: trim((string) ($play['platform'] ?? '')),
             'transcode' => isset($play['is_transcode']) ? (bool) $play['is_transcode'] : null,
+            // Tracearr 3.3: the profile (Silo, tofa) when it isn't the account's main one.
+            'profile' => trim((string) ($play['profile'] ?? '')),
             // Tracearr's own proxy path; served to the customer by number.
             'poster_path' => str_starts_with((string) ($play['poster_url'] ?? ''), '/api/v1/images/proxy?') ? (string) $play['poster_url'] : '',
         ];
@@ -1080,10 +1083,21 @@ class PaywarrStats extends Extension
             $day = strtotime('-1 day', $day);
         }
 
+        // Who watches: profiles (Silo, tofa), only when one isn't the main one.
+        $profiles = [];
+        foreach ($plays as $play) {
+            $profiles[(string) ($play['profile'] ?? '')] = ($profiles[(string) ($play['profile'] ?? '')] ?? 0) + 1;
+        }
+        arsort($profiles);
+        if (count(array_filter(array_keys($profiles), fn ($p) => $p !== '')) === 0) {
+            $profiles = [];
+        }
+
         return [
             'weekdays' => $weekdays,
             'dayparts' => $dayparts,
             'devices' => array_slice($devices, 0, 4, true),
+            'profiles' => array_slice($profiles, 0, 6, true),
             'direct_share' => $known > 0 ? (int) round(100 * $direct / $known) : null,
             'longest_streak' => $longest,
             'current_streak' => $current,
@@ -1184,7 +1198,7 @@ class PaywarrStats extends Extension
                 . '<div><div class="ps-label">' . $e(self::t('Favourite time')) . '</div><div class="ps-title">' . $e($parts[array_search(max($insights['dayparts']), $insights['dayparts'], true)]) . '</div></div></div>';
             $html .= '</section>';
         }
-        if ($stats['genres'] || $insights['devices']) {
+        if ($stats['genres'] || $insights['devices'] || !empty($insights['profiles'])) {
             $html .= '<section class="ps-card">';
             if ($stats['genres']) {
                 $top = max($stats['genres']);
@@ -1201,6 +1215,13 @@ class PaywarrStats extends Extension
                 }
                 if ($insights['direct_share'] !== null) {
                     $html .= '<p class="ps-muted ps-small">' . $e(self::t(':percent% played directly, without converting', ['percent' => $insights['direct_share']])) . '</p>';
+                }
+            }
+            if (!empty($insights['profiles'])) {
+                $html .= '<h2>' . $this->icon('where-you-watch') . $e(self::t('Who watches')) . '</h2>';
+                $sum = array_sum($insights['profiles']);
+                foreach ($insights['profiles'] as $profile => $count) {
+                    $html .= '<div class="ps-line"><span>' . $e($profile !== '' ? $profile : self::t('Main profile')) . '</span>' . $bar($count / max(1, $sum)) . '<span class="ps-tiny">' . round(100 * $count / max(1, $sum)) . '%</span></div>';
                 }
             }
             $html .= '</section>';

@@ -11,6 +11,9 @@ of its release on GitHub (`.github/release-notes.sh` puts it there).
   for them separately, so nothing is counted twice. Silo customers are found
   by their username as well as their Silo ID. Without Silo in Tracearr, Silo's
   own settings are used as before.
+- **Who watches** (Tracearr 3.3 profiles on Silo): My stats shows which
+  profiles watch, and Wrapped which profile watched the most, when an account
+  has more than its main profile.
 
 ## 1.11.6 (2026-11-25)
 
