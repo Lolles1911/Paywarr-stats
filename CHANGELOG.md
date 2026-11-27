@@ -3,6 +3,14 @@
 What changed in each version of Paywarr Stats. Each section is also the text
 of its release on GitHub (`.github/release-notes.sh` puts it there).
 
+## 1.13.0 (2026-11-27)
+
+- **Wrapped as an image:** "Your year" in My stats has **Share your year** with
+  two buttons: **Story** (1080×1920) and **Square** (1080×1080). The image
+  shows the hours, the year's facts and the top titles, in the shop's colour
+  with its name and address. It is drawn in the browser; on a phone it opens
+  the share sheet, elsewhere it is downloaded.
+
 ## 1.12.0 (2026-11-27)
 
 - **Silo through Tracearr:** when Tracearr (3.3 or newer) watches your Silo,

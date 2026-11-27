@@ -958,6 +958,13 @@ test('year in review: shown December and January, the year\'s numbers, top title
     $html = stats()->wrappedHtml($year);
     ok(str_contains($html, 'Your 2026') && str_contains($html, 'Glass Harbor') && str_contains($html, 'March'), 'the section');
     same('', stats()->wrappedHtml(stats()->summarizeYear([], 2026)), 'nothing watched: nothing shown');
+    ok(str_contains($html, 'data-format="story"') && str_contains($html, 'data-format="square"') && str_contains($html, 'id="ps-wrapped-data"'), 'save as a story or a square image');
+    $data = stats()->wrappedImageData($year, [['Watched', '4 h 15 min'], ['Plays', '4']]);
+    same([['Plays', '4']], $data['facts'], 'the hours are the big number, not a fact');
+    same(['My 2026', 'My top {n}', '4', 'hours of watching', ['Glass Harbor', 'Arrival']], [$data['label'], $data['topLabel'], $data['hours'], $data['unit'], array_column($data['top'], 0)], 'what the image shows');
+    $evil = $year;
+    $evil['top'][0]['title'] = '</script><script>alert(1)</script>';
+    ok(!str_contains(stats()->wrappedHtml($evil), '<script>alert(1)'), 'a title can\'t end the script');
 });
 
 test('year in review: the first week of December, each customer once, and one post with the server\'s year', function () {
