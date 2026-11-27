@@ -23,7 +23,7 @@ use Throwable;
 #[ExtensionMeta(
     name: 'Paywarr Stats',
     description: 'Shows each customer their own watch statistics from Tracearr or Silo, on a page in the client area.',
-    version: '1.11.6',
+    version: '1.12.0',
     author: 'Paywarr',
     url: 'https://github.com/Lolles1911/Paywarr-stats',
 )]
@@ -235,7 +235,7 @@ class PaywarrStats extends Extension
         }
         $overview = (new AdminOverview(
             $this->configured('tracearr') ? $this->client() : null,
-            $this->configured('silo') ? $this->silo() : null,
+            $this->siloDirect() ? $this->silo() : null,
             (string) (config('app.timezone') ?: 'UTC'),
         ))->gather($this->customerIndex());
         $overview['business'] = $this->business($overview);
@@ -428,6 +428,10 @@ class PaywarrStats extends Extension
                 } else {
                     $index[$key] = $customer;
                 }
+                // Tracearr (3.3+) names Silo users by username, Silo itself by ID: both find them.
+                if ($account['type'] === 'silo') {
+                    $index['silo|' . strtolower($account['username'])] = $index[$key];
+                }
             }
         }
 
@@ -504,7 +508,7 @@ class PaywarrStats extends Extension
             $active = false;
             $unknown = false;
             foreach ($accounts as $account) {
-                if ($account['type'] === 'silo') {
+                if ($account['type'] === 'silo' && !$this->tracearrHasSilo()) {
                     if (!$this->configured('silo')) {
                         $unknown = true;
 
@@ -767,7 +771,7 @@ class PaywarrStats extends Extension
                 $parts[] = $this->tracearrPart($ids);
             }
         }
-        if ($silo && $this->configured('silo')) {
+        if ($silo && $this->siloDirect()) {
             $part = $this->siloPart(array_values(array_filter(array_column($silo, 'id'), 'ctype_digit')));
             if ($part['plays'] || $part['windows']['all_time']['plays'] > 0) {
                 $parts[] = $part;
@@ -1625,6 +1629,37 @@ class PaywarrStats extends Extension
     private function configured(string $source): bool
     {
         return trim((string) $this->config($source . '_url')) !== '' && trim((string) $this->config($source . '_api_key')) !== '';
+    }
+
+    /**
+     * Whether Tracearr watches a Silo server (Tracearr 3.3 and newer): then
+     * Silo's plays come from Tracearr like the others', not from Silo itself
+     * (or they would count twice). Kept an hour.
+     */
+    public function tracearrHasSilo(): bool
+    {
+        if (!$this->configured('tracearr')) {
+            return false;
+        }
+        try {
+            return (bool) \Illuminate\Support\Facades\Cache::remember('paywarr-stats:tracearr-silo', 3600, function () {
+                foreach ($this->client()->servers() as $server) {
+                    if (strtolower((string) ($server['server_type'] ?? $server['type'] ?? '')) === 'silo') {
+                        return 1;
+                    }
+                }
+
+                return 0;
+            });
+        } catch (Throwable $e) {
+            return false;
+        }
+    }
+
+    /** Silo's own API for plays: set up, and Tracearr doesn't watch Silo. */
+    private function siloDirect(): bool
+    {
+        return $this->configured('silo') && !$this->tracearrHasSilo();
     }
 
     /* ------------------------------------------------------------------

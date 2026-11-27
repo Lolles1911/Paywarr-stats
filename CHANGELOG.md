@@ -3,6 +3,15 @@
 What changed in each version of Paywarr Stats. Each section is also the text
 of its release on GitHub (`.github/release-notes.sh` puts it there).
 
+## 1.12.0 (2026-11-27)
+
+- **Silo through Tracearr:** when Tracearr (3.3 or newer) watches your Silo,
+  Silo's plays come from Tracearr like the others' on every page (My stats,
+  Wrapped, the admin pages, the "we miss you" reminder), and Silo isn't asked
+  for them separately, so nothing is counted twice. Silo customers are found
+  by their username as well as their Silo ID. Without Silo in Tracearr, Silo's
+  own settings are used as before.
+
 ## 1.11.6 (2026-11-25)
 
 - With Paywarr 1.37 or newer, Paywarr's Tracearr is read from Paywarr ->

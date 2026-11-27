@@ -66,7 +66,7 @@ trait People
                 $errors[] = 'Tracearr: ' . $e->getMessage();
             }
         }
-        if ($this->configured('silo')) {
+        if ($this->siloDirect()) {
             foreach ($owners as $key => $owner) {
                 if (!str_starts_with($key, 'silo|')) {
                     continue;
@@ -113,6 +113,10 @@ trait People
                     $mapKey = $account['type'] === 'silo' ? 'silo|' . $account['id'] : $account['type'] . '|' . strtolower($account['username']);
                     if (!isset($owners[$mapKey]) || $active) {
                         $owners[$mapKey] = ['who' => $service->user_id ?? ($service->user->id ?? null), 'server' => $server !== '' ? $server : ($account['type'] === 'silo' ? 'Silo' : '')];
+                        if ($account['type'] === 'silo') {
+                            // Tracearr (3.3+) names Silo users by username.
+                            $owners['silo|' . strtolower($account['username'])] = $owners[$mapKey];
+                        }
                     }
                 }
             }

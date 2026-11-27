@@ -51,7 +51,7 @@ trait Wrapped
                     }
                 }
             }
-            if ($silo && $this->configured('silo')) {
+            if ($silo && $this->siloDirect()) {
                 foreach ($silo as $account) {
                     if (ctype_digit((string) $account['id'])) {
                         foreach ($this->silo()->history((string) $account['id'], 2000) as $play) {
@@ -285,7 +285,7 @@ trait Wrapped
                     $plays[] = $this->peopleTracearrPlay($play, []);
                 }
             }
-            if ($this->configured('silo')) {
+            if ($this->siloDirect()) {
                 foreach ($this->silo()->accounts() as $account) {
                     if (($account['role'] ?? '') === 'admin') {
                         continue;
