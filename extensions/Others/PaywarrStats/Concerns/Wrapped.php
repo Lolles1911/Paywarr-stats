@@ -184,8 +184,89 @@ trait Wrapped
             $html .= '<p class="ps-muted ps-small" style="margin-top:.8rem">' . $e(self::t('It started on :date with :title.', ['date' => self::t(':month :day', ['month' => $this->monthName((int) date('n', $year['first']['at'])), 'day' => date('j', $year['first']['at'])]), 'title' => $year['first']['title']])) . '</p>';
         }
 
-        return $html . '</section>';
+        return $html . $this->wrappedImageButtons($year, $facts) . '</section>';
     }
+
+    /** What the shareable image shows: the same as the section, short. */
+    public function wrappedImageData(array $year, array $facts): array
+    {
+        $site = '';
+        try {
+            $site = (string) config('app.name');
+            $host = (string) parse_url((string) config('app.url'), PHP_URL_HOST);
+        } catch (\Throwable $e) {
+            $host = '';
+        }
+
+        return [
+            'label' => self::t('My :year', ['year' => $year['year']]),
+            'hours' => number_format($year['ms'] / 3600000, 0, '', self::t(',')),
+            'unit' => self::t('hours of watching'),
+            // Without "Watched": the hours are the big number.
+            'facts' => array_map(fn ($f) => [(string) $f[0], (string) $f[1]], array_slice($facts, 1, 6)),
+            'topLabel' => self::t('My top :count', ['count' => '{n}']),
+            'top' => array_map(fn ($t) => [(string) $t['title'], $this->duration((int) $t['ms'])], array_slice($year['top'], 0, 5)),
+            'site' => $site,
+            'host' => $host,
+            'file' => strtolower(preg_replace('/[^A-Za-z0-9]+/', '-', ($site !== '' ? $site . '-' : '') . 'wrapped-' . $year['year'])),
+        ];
+    }
+
+    /** "Save as image": a story (1080x1920) and a square (1080x1080), drawn in the browser. */
+    private function wrappedImageButtons(array $year, array $facts): string
+    {
+        $e = fn ($value) => htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
+        $data = json_encode($this->wrappedImageData($year, $facts), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+        $button = 'class="ps-wrapped-save" style="border:1px solid hsl(var(--color-primary)/.5);border-radius:.6rem;padding:.35rem .8rem;font-weight:600;background:hsl(var(--color-primary)/.15);cursor:pointer"';
+
+        return '<div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-top:1rem"><span class="ps-muted ps-small">' . $e(self::t('Share your year:')) . '</span>'
+            . '<button type="button" data-format="story" ' . $button . '>📱 ' . $e(self::t('Story')) . '</button>'
+            . '<button type="button" data-format="square" ' . $button . '>⬛ ' . $e(self::t('Square')) . '</button></div>'
+            . '<script type="application/json" id="ps-wrapped-data">' . $data . '</script>'
+            . '<script>' . self::WRAPPED_IMAGE_JS . '</script>';
+    }
+
+    /** Draws the image on a canvas and shares it (phones) or downloads it. */
+    private const WRAPPED_IMAGE_JS = <<<'JS'
+(function(){
+var el=document.getElementById('ps-wrapped-data');if(!el)return;var d=JSON.parse(el.textContent);
+function colour(){var v=getComputedStyle(document.documentElement).getPropertyValue('--color-primary').trim();return !v?'#db2777':/^(#|rgb|hsl|oklch)/.test(v)?v:'hsl('+v+')';}
+function fit(c,t,w){if(c.measureText(t).width<=w)return t;while(t.length>1&&c.measureText(t+'…').width>w)t=t.slice(0,-1);return t+'…';}
+function draw(fmt){
+ var W=1080,H=fmt==='story'?1920:1080,s=fmt==='story',cv=document.createElement('canvas');cv.width=W;cv.height=H;var c=cv.getContext('2d');
+ var font=getComputedStyle(document.body).fontFamily||'sans-serif',p=colour(),P=s?96:80;
+ c.fillStyle='#0b0b12';c.fillRect(0,0,W,H);
+ var g=c.createRadialGradient(W*.85,H*.1,0,W*.85,H*.1,H*.9);g.addColorStop(0,p);g.addColorStop(1,'rgba(11,11,18,0)');c.globalAlpha=.55;c.fillStyle=g;c.fillRect(0,0,W,H);
+ var g2=c.createRadialGradient(0,H,0,0,H,H*.7);g2.addColorStop(0,p);g2.addColorStop(1,'rgba(11,11,18,0)');c.globalAlpha=.3;c.fillStyle=g2;c.fillRect(0,0,W,H);c.globalAlpha=1;
+ c.textBaseline='alphabetic';c.fillStyle='#fff';
+ var y=s?190:150;
+ c.font='600 '+(s?40:34)+'px '+font;c.globalAlpha=.75;c.fillText(fit(c,d.site,W-2*P),P,y-(s?70:56));c.globalAlpha=1;
+ c.font='800 '+(s?64:54)+'px '+font;c.fillText(fit(c,d.label,W-2*P),P,y);
+ y+=s?260:190;c.font='900 '+(s?250:180)+'px '+font;c.fillText(d.hours,P,y);
+ y+=s?80:64;c.font='600 '+(s?56:44)+'px '+font;c.globalAlpha=.9;c.fillText(d.unit,P,y);c.globalAlpha=1;
+ var facts=d.facts.slice(0,s?6:4),cw=(W-2*P)/2,rh=s?150:118;y+=s?120:90;
+ for(var i=0;i<facts.length;i++){var x=P+(i%2)*cw,yy=y+Math.floor(i/2)*rh;
+  c.font='500 '+(s?34:28)+'px '+font;c.globalAlpha=.65;c.fillText(fit(c,facts[i][0],cw-30),x,yy);c.globalAlpha=1;
+  c.font='800 '+(s?52:42)+'px '+font;c.fillText(fit(c,facts[i][1],cw-30),x,yy+(s?62:50));}
+ y+=Math.ceil(facts.length/2)*rh+(s?50:20);
+ var top=d.top.slice(0,s?5:3);
+ if(top.length&&y<H-200){c.font='700 '+(s?40:32)+'px '+font;c.globalAlpha=.75;c.fillText(d.topLabel.replace('{n}',top.length),P,y);c.globalAlpha=1;y+=s?24:16;
+  for(var j=0;j<top.length&&y<H-(s?190:120);j++){y+=s?84:64;
+   c.fillStyle=p;c.font='900 '+(s?52:40)+'px '+font;c.fillText(String(j+1),P,y);c.fillStyle='#fff';
+   c.font='700 '+(s?48:38)+'px '+font;var tw=c.measureText(top[j][1]).width;
+   c.fillText(fit(c,top[j][0],W-2*P-(s?90:70)-tw-(s?190:150)),P+(s?70:56),y);
+   c.font='500 '+(s?36:30)+'px '+font;c.globalAlpha=.65;var dw=c.measureText(top[j][1]).width;c.fillText(top[j][1],W-P-dw,y);c.globalAlpha=1;}}
+ if(d.host){c.font='600 '+(s?38:30)+'px '+font;c.globalAlpha=.7;c.fillText(d.host,P,H-(s?96:64));c.globalAlpha=1;}
+ c.fillStyle=p;c.fillRect(W-P-(s?120:90),H-(s?110:76),s?120:90,s?14:10);
+ return cv;}
+function save(fmt,btn){var cv=draw(fmt),name=d.file+'-'+fmt+'.png';
+ cv.toBlob(function(b){if(!b)return;var f;try{f=new File([b],name,{type:'image/png'});}catch(e){}
+  if(f&&navigator.canShare&&navigator.canShare({files:[f]})){navigator.share({files:[f]}).catch(function(){});return;}
+  var a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;document.body.appendChild(a);a.click();setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1000);},'image/png');}
+document.querySelectorAll('.ps-wrapped-save').forEach(function(b){b.addEventListener('click',function(){save(b.getAttribute('data-format'),b);});});
+window.psWrappedDraw=draw;
+})();
+JS;
 
     /**
      * Daily, December 1 to 7: every active customer who watched something

@@ -156,5 +156,11 @@
     ":month :day": ":day. :month",
     "Who watches": "Hvem ser",
     "Main profile": "Hovedprofil",
-    "Watched the most": "Så mest"
+    "Watched the most": "Så mest",
+    "My :year": "Mit :year",
+    "hours of watching": "timers streaming",
+    "My top :count": "Min top :count",
+    "Share your year:": "Del dit år:",
+    "Story": "Story",
+    "Square": "Kvadrat"
 }

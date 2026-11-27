@@ -6,6 +6,10 @@ From December 1 to January 31, My stats starts with **"Your year"**: hours
 watched, plays, days with something on, longest streak, busiest month,
 favourite day and genre, the top 5 titles and the first play of the year.
 
+**Share your year** saves it as an image: **Story** (1080×1920) or
+**Square** (1080×1080), in the shop's colour with its name and address. It is
+drawn in the customer's browser; on a phone it opens the share sheet.
+
 In the first week of December (checked daily at 11:17) every active customer
 who watched something that year gets it by mail, and as a private Discord
 message if they connected Discord (sent through Paywarr). Once a year each.
